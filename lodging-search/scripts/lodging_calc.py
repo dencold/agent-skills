@@ -115,3 +115,57 @@ def effective_cost(total, perk_value):
     against a booking page, which destroys trust in every other number.
     """
     return round(max(0.0, total - perk_value), 2)
+
+
+# A 4.0 hotel is unremarkable; a 4.0 Airbnb is a warning. Floors differ.
+CHANNEL_RATING_FLOORS = {
+    "airbnb": 4.5,
+    "vrbo": 4.5,
+    "hotel": 4.0,
+}
+
+THIN_REVIEW_THRESHOLD = 10
+
+
+def normalize_rating(rating, scale):
+    """Convert a provider rating to a 0-5 scale before any threshold."""
+    if scale not in (5, 10):
+        raise ValueError(f"unsupported rating scale: {scale}")
+    if not 0 <= rating <= scale:
+        raise ValueError(f"rating {rating} out of range for scale {scale}")
+    return round(rating * (5.0 / scale), 2)
+
+
+def apply_gates(candidate, budget_ceiling=None):
+    """Eliminate disqualified stays; flag the merely uncertain ones.
+
+    Thin review counts are a flag rather than a gate: a listing with six
+    reviews may be excellent and newly listed, and eliminating it silently
+    discards good options.
+    """
+    eliminated_by = []
+    flags = []
+
+    if not candidate.get("available", True):
+        eliminated_by.append("unavailable")
+
+    if candidate["sleeps"] < candidate["party_size"]:
+        eliminated_by.append("cannot_sleep_party")
+
+    if budget_ceiling is not None and candidate["total"] > budget_ceiling:
+        eliminated_by.append("over_budget")
+
+    floor = CHANNEL_RATING_FLOORS.get(candidate["channel"], 4.0)
+    normalized = normalize_rating(candidate["rating"],
+                                  candidate.get("rating_scale", 5))
+    if normalized < floor:
+        eliminated_by.append("below_rating_floor")
+
+    if candidate.get("review_count", 0) < THIN_REVIEW_THRESHOLD:
+        flags.append("thin_review_history")
+
+    return {
+        "passes": len(eliminated_by) == 0,
+        "eliminated_by": eliminated_by,
+        "flags": flags,
+    }

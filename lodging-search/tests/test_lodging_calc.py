@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 
-from lodging_calc import rooms_needed, rental_total, hotel_total, effective_cost
+from lodging_calc import rooms_needed, rental_total, hotel_total, effective_cost, normalize_rating, apply_gates, CHANNEL_RATING_FLOORS, THIN_REVIEW_THRESHOLD
 
 
 class TestRoomsNeeded(unittest.TestCase):
@@ -121,6 +121,104 @@ class TestEffectiveCost(unittest.TestCase):
 
     def test_perk_value_cannot_push_below_zero(self):
         self.assertAlmostEqual(effective_cost(100.0, 500.0), 0.00, places=2)
+
+
+class TestNormalizeRating(unittest.TestCase):
+    def test_five_point_scale_passes_through(self):
+        self.assertAlmostEqual(normalize_rating(4.8, 5), 4.8, places=2)
+
+    def test_ten_point_scale_halves(self):
+        self.assertAlmostEqual(normalize_rating(9.0, 10), 4.5, places=2)
+        self.assertAlmostEqual(normalize_rating(8.0, 10), 4.0, places=2)
+
+    def test_rejects_unsupported_scale(self):
+        with self.assertRaises(ValueError):
+            normalize_rating(90, 100)
+
+    def test_rejects_out_of_range_rating(self):
+        with self.assertRaises(ValueError):
+            normalize_rating(6.0, 5)
+
+
+def _candidate(**overrides):
+    base = {
+        "name": "Test Property",
+        "channel": "airbnb",
+        "total": 1000.00,
+        "rating": 4.8,
+        "rating_scale": 5,
+        "review_count": 120,
+        "sleeps": 6,
+        "party_size": 5,
+        "available": True,
+    }
+    base.update(overrides)
+    return base
+
+
+class TestApplyGates(unittest.TestCase):
+    def test_good_candidate_passes_clean(self):
+        result = apply_gates(_candidate(), budget_ceiling=1500.00)
+        self.assertTrue(result["passes"])
+        self.assertEqual(result["eliminated_by"], [])
+        self.assertEqual(result["flags"], [])
+
+    def test_cannot_sleep_party_is_eliminated(self):
+        result = apply_gates(_candidate(sleeps=4, party_size=5))
+        self.assertFalse(result["passes"])
+        self.assertIn("cannot_sleep_party", result["eliminated_by"])
+
+    def test_over_budget_is_eliminated(self):
+        result = apply_gates(_candidate(total=2000.00), budget_ceiling=1500.00)
+        self.assertFalse(result["passes"])
+        self.assertIn("over_budget", result["eliminated_by"])
+
+    def test_no_budget_ceiling_means_no_budget_gate(self):
+        result = apply_gates(_candidate(total=99999.00), budget_ceiling=None)
+        self.assertTrue(result["passes"])
+
+    def test_unavailable_is_eliminated(self):
+        result = apply_gates(_candidate(available=False))
+        self.assertFalse(result["passes"])
+        self.assertIn("unavailable", result["eliminated_by"])
+
+    def test_low_rating_eliminated_per_channel_floor(self):
+        result = apply_gates(_candidate(channel="airbnb", rating=4.1))
+        self.assertFalse(result["passes"])
+        self.assertIn("below_rating_floor", result["eliminated_by"])
+
+    def test_same_normalized_rating_survives_on_hotel_channel(self):
+        # 4.1 of 5 clears the hotel floor but not the stricter rental floor
+        result = apply_gates(_candidate(channel="hotel", rating=8.2,
+                                        rating_scale=10))
+        self.assertTrue(result["passes"])
+
+    def test_thin_reviews_flag_but_do_not_eliminate(self):
+        result = apply_gates(_candidate(review_count=6))
+        self.assertTrue(result["passes"])
+        self.assertIn("thin_review_history", result["flags"])
+
+    def test_estimate_and_multiple_eliminations_accumulate(self):
+        result = apply_gates(_candidate(sleeps=2, party_size=5, available=False))
+        self.assertFalse(result["passes"])
+        self.assertEqual(len(result["eliminated_by"]), 2)
+
+
+class TestConstantsMatchRankingDoc(unittest.TestCase):
+    """references/ranking.md documents these same values in prose.
+
+    Pin them here so the code and the doc cannot drift apart silently.
+    """
+
+    def test_rental_floors_are_stricter_than_hotel_floor(self):
+        self.assertEqual(CHANNEL_RATING_FLOORS["airbnb"], 4.5)
+        self.assertEqual(CHANNEL_RATING_FLOORS["vrbo"], 4.5)
+        self.assertEqual(CHANNEL_RATING_FLOORS["hotel"], 4.0)
+        self.assertGreater(CHANNEL_RATING_FLOORS["airbnb"],
+                           CHANNEL_RATING_FLOORS["hotel"])
+
+    def test_thin_review_threshold_matches_doc(self):
+        self.assertEqual(THIN_REVIEW_THRESHOLD, 10)
 
 
 if __name__ == "__main__":
