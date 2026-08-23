@@ -12,6 +12,11 @@ against a cheaper competitor.
 
 ## Setup
 
+Paths below are relative to this skill's own base directory (Claude is
+told that directory when the skill loads — substitute it in). Never treat
+them as relative to the current working directory: the skill runs with cwd
+set to the user's project, not to wherever the skill is installed.
+
 Read `~/.claude/lodging-profile.md`. If it does not exist, walk the user
 through creating one from `references/profile.template.md`, then continue.
 The profile lives outside this repo on purpose — see the template.
@@ -36,9 +41,12 @@ wastes the whole search.
 
 ## 2. Occupancy check — before any search
 
+`scripts/lodging_calc.py` is skill-relative (see Setup) — resolve it
+against this skill's own base directory, not the cwd:
+
 ```bash
 python3 -c "
-import sys; sys.path.insert(0, 'lodging-search/scripts')
+import sys; sys.path.insert(0, '<skill-dir>/scripts')
 from lodging_calc import rooms_needed
 print(rooms_needed(adults=2, kids_ages=[4,6,9]))
 "
@@ -103,6 +111,11 @@ point-in-time and must be verified at booking.
 A follow-up — "show me the next 10", "what else is there" — serves the next
 page **from the saved trip file without re-searching**.
 
+In a fresh session there is no page 1 on screen to continue from, so
+locate the trip file first: glob `~/.claude/lodging-trips/*<location>*.md`,
+take the most recently modified match, and state plainly which trip was
+resumed (location and dates) before serving the next page.
+
 Re-searching is wrong here, not merely wasteful: prices move and providers
 return non-deterministic result sets, so a fresh query produces a page 2
 inconsistent with the page 1 already on screen, possibly duplicating it.
@@ -124,10 +137,13 @@ at the same moment.
 ## Output
 
 1. **Terminal** — the ranked page plus pros/cons. Always.
-2. **Saved markdown** — `lodging-search/trips/YYYY-MM-DD-<location>.md`,
-   every run. Holds the **complete ranked pool**, not just the shown page,
-   plus resolved parameters and the price-check timestamp. This is what
-   makes pagination work in a later session.
+2. **Saved markdown** — `~/.claude/lodging-trips/YYYY-MM-DD-<location>.md`,
+   every run, where `YYYY-MM-DD` is the date the search was run, not the
+   check-in date. Holds the **complete ranked pool**, not just the shown
+   page, plus resolved parameters and the price-check timestamp. This is
+   what makes pagination work in a later session, and it builds a
+   diffable record of price movement across repeated searches for one
+   trip.
 3. **Artifact** — a shareable comparison page, on request only. Artifact
    CSP blocks remote images, so these carry text, prices, and links, never
    property photos.
