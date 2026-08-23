@@ -40,6 +40,22 @@ def rooms_needed(adults, kids_ages, max_occupancy=MAX_OCCUPANCY_DEFAULT,
 DEFAULT_SERVICE_FEE_RATE = 0.14
 
 
+def _finalize_total(composed, breakdown, provider_total):
+    """Shared by rental_total and hotel_total.
+
+    When a provider total is supplied it wins and is authoritative, but the
+    composed figure is not discarded — it is attached to the breakdown as
+    `composed_estimate` so a caller printing both a total and a breakdown
+    never shows two numbers that silently disagree.
+    """
+    if provider_total is not None:
+        breakdown = dict(breakdown, composed_estimate=round(composed, 2))
+        return {"total": round(provider_total, 2), "is_estimate": False,
+                "breakdown": breakdown}
+    return {"total": round(composed, 2), "is_estimate": True,
+            "breakdown": breakdown}
+
+
 def rental_total(nightly_rate, nights, cleaning_fee=0.0,
                  service_fee_rate=DEFAULT_SERVICE_FEE_RATE, tax_rate=0.0,
                  pet_fee=0.0, discount=0.0, provider_total=None):
@@ -51,6 +67,8 @@ def rental_total(nightly_rate, nights, cleaning_fee=0.0,
     """
     if nights < 1:
         raise ValueError("nights must be at least 1")
+    if discount > nightly_rate * nights:
+        raise ValueError("discount cannot exceed the pre-fee nightly total")
 
     subtotal = nightly_rate * nights - discount
     service_fee = subtotal * service_fee_rate
@@ -67,11 +85,7 @@ def rental_total(nightly_rate, nights, cleaning_fee=0.0,
         "discount": round(discount, 2),
     }
 
-    if provider_total is not None:
-        return {"total": round(provider_total, 2), "is_estimate": False,
-                "breakdown": breakdown}
-    return {"total": round(composed, 2), "is_estimate": True,
-            "breakdown": breakdown}
+    return _finalize_total(composed, breakdown, provider_total)
 
 
 def hotel_total(nightly_rate, nights, rooms=1, resort_fee_per_night=0.0,
@@ -101,11 +115,7 @@ def hotel_total(nightly_rate, nights, rooms=1, resort_fee_per_night=0.0,
         "rooms": rooms,
     }
 
-    if provider_total is not None:
-        return {"total": round(provider_total, 2), "is_estimate": False,
-                "breakdown": breakdown}
-    return {"total": round(composed, 2), "is_estimate": True,
-            "breakdown": breakdown}
+    return _finalize_total(composed, breakdown, provider_total)
 
 
 def effective_cost(total, perk_value):
@@ -141,7 +151,9 @@ def apply_gates(candidate, budget_ceiling=None):
 
     Thin review counts are a flag rather than a gate: a listing with six
     reviews may be excellent and newly listed, and eliminating it silently
-    discards good options.
+    discards good options. A missing or None rating means unrated, not
+    zero — a brand-new listing with no reviews yet is flagged, not
+    eliminated, and not allowed to crash the whole gating pass.
     """
     eliminated_by = []
     flags = []
@@ -155,11 +167,18 @@ def apply_gates(candidate, budget_ceiling=None):
     if budget_ceiling is not None and candidate["total"] > budget_ceiling:
         eliminated_by.append("over_budget")
 
-    floor = CHANNEL_RATING_FLOORS.get(candidate["channel"], 4.0)
-    normalized = normalize_rating(candidate["rating"],
-                                  candidate.get("rating_scale", 5))
-    if normalized < floor:
-        eliminated_by.append("below_rating_floor")
+    channel = candidate["channel"].strip().lower()
+    if channel not in CHANNEL_RATING_FLOORS:
+        raise ValueError(f"unrecognized channel: {candidate['channel']!r}")
+
+    rating = candidate.get("rating")
+    if rating is None:
+        flags.append("unrated")
+    else:
+        floor = CHANNEL_RATING_FLOORS[channel]
+        normalized = normalize_rating(rating, candidate.get("rating_scale", 5))
+        if normalized < floor:
+            eliminated_by.append("below_rating_floor")
 
     if candidate.get("review_count", 0) < THIN_REVIEW_THRESHOLD:
         flags.append("thin_review_history")

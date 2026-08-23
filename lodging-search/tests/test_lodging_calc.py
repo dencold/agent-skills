@@ -4,7 +4,11 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 
-from lodging_calc import rooms_needed, rental_total, hotel_total, effective_cost, normalize_rating, apply_gates, CHANNEL_RATING_FLOORS, THIN_REVIEW_THRESHOLD
+from lodging_calc import (
+    rooms_needed, rental_total, hotel_total, effective_cost,
+    normalize_rating, apply_gates, CHANNEL_RATING_FLOORS,
+    THIN_REVIEW_THRESHOLD,
+)
 
 
 class TestRoomsNeeded(unittest.TestCase):
@@ -45,6 +49,10 @@ class TestRoomsNeeded(unittest.TestCase):
         with self.assertRaises(ValueError):
             rooms_needed(adults=0, kids_ages=[6])
 
+    def test_rejects_zero_max_occupancy(self):
+        with self.assertRaises(ValueError):
+            rooms_needed(adults=2, kids_ages=[6], max_occupancy=0)
+
 
 class TestRentalTotal(unittest.TestCase):
     def test_composes_from_parts_and_marks_estimate(self):
@@ -78,6 +86,14 @@ class TestRentalTotal(unittest.TestCase):
         with self.assertRaises(ValueError):
             rental_total(nightly_rate=100.0, nights=0)
 
+    def test_discount_larger_than_stay_raises_instead_of_going_negative(self):
+        # nightly_rate * nights = 300; a 500 discount is a data error, not
+        # a legitimate value to floor at zero — it must not silently
+        # produce a negative total that could rank #1.
+        with self.assertRaises(ValueError):
+            rental_total(nightly_rate=100.0, nights=3, discount=500.0,
+                         tax_rate=0.10)
+
 
 class TestHotelTotal(unittest.TestCase):
     def test_multiplies_by_rooms(self):
@@ -103,6 +119,35 @@ class TestHotelTotal(unittest.TestCase):
                              tax_rate=0.15, provider_total=1400.00)
         self.assertAlmostEqual(result["total"], 1400.00, places=2)
         self.assertFalse(result["is_estimate"])
+
+    def test_rejects_zero_nights(self):
+        with self.assertRaises(ValueError):
+            hotel_total(nightly_rate=200.0, nights=0)
+
+    def test_rejects_zero_rooms(self):
+        with self.assertRaises(ValueError):
+            hotel_total(nightly_rate=200.0, nights=2, rooms=0)
+
+
+class TestProviderTotalBreakdown(unittest.TestCase):
+    """provider_total wins, but the composed figure must stay visible and
+    labeled so it never silently disagrees with the authoritative total."""
+
+    def test_rental_breakdown_carries_composed_estimate_alongside_total(self):
+        result = rental_total(nightly_rate=180.0, nights=3, cleaning_fee=200.0,
+                              tax_rate=0.10, provider_total=850.00)
+        self.assertAlmostEqual(result["total"], 850.00, places=2)
+        self.assertAlmostEqual(result["breakdown"]["composed_estimate"],
+                               897.16, places=2)
+
+    def test_hotel_breakdown_carries_composed_estimate_alongside_total(self):
+        result = hotel_total(nightly_rate=210.0, nights=3, rooms=2,
+                             tax_rate=0.15, provider_total=1400.00)
+        self.assertIn("composed_estimate", result["breakdown"])
+
+    def test_no_composed_estimate_key_when_provider_total_absent(self):
+        result = rental_total(nightly_rate=180.0, nights=3)
+        self.assertNotIn("composed_estimate", result["breakdown"])
 
 
 class TestCleaningFeeInversion(unittest.TestCase):
@@ -202,6 +247,37 @@ class TestApplyGates(unittest.TestCase):
         result = apply_gates(_candidate(sleeps=2, party_size=5, available=False))
         self.assertFalse(result["passes"])
         self.assertEqual(len(result["eliminated_by"]), 2)
+
+    def test_none_rating_is_unrated_not_eliminated_or_a_crash(self):
+        result = apply_gates(_candidate(rating=None))
+        self.assertTrue(result["passes"])
+        self.assertNotIn("below_rating_floor", result["eliminated_by"])
+        self.assertIn("unrated", result["flags"])
+
+    def test_missing_rating_key_is_also_unrated(self):
+        candidate = _candidate()
+        del candidate["rating"]
+        result = apply_gates(candidate)
+        self.assertTrue(result["passes"])
+        self.assertIn("unrated", result["flags"])
+
+    def test_zero_rating_is_not_treated_as_unrated(self):
+        # 0.0 is a real (terrible) rating, distinct from no rating at all,
+        # and must still gate out normally.
+        result = apply_gates(_candidate(rating=0.0))
+        self.assertFalse(result["passes"])
+        self.assertIn("below_rating_floor", result["eliminated_by"])
+        self.assertNotIn("unrated", result["flags"])
+
+    def test_channel_capitalization_is_normalized(self):
+        lower = apply_gates(_candidate(channel="airbnb", rating=4.2))
+        upper = apply_gates(_candidate(channel="Airbnb", rating=4.2))
+        self.assertEqual(lower["passes"], upper["passes"])
+        self.assertFalse(lower["passes"])
+
+    def test_unrecognized_channel_raises_instead_of_defaulting(self):
+        with self.assertRaises(ValueError):
+            apply_gates(_candidate(channel="bookingcom"))
 
 
 class TestConstantsMatchRankingDoc(unittest.TestCase):
