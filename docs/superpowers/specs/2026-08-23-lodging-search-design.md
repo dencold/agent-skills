@@ -116,6 +116,7 @@ Profile contents:
 - Typical budget range per night
 - Driving vs. flying (drives the parking-fee calculation)
 - Cancellation flexibility tolerance
+- Results per page (default 10)
 ```
 
 The perks list matters: the skill converts status into dollars, so it needs
@@ -228,8 +229,13 @@ property year-round.
 
 ### 6. Present
 
-Top 5, ranked, each with true total cost, 2–3 pros, 1–2 **genuine** cons,
-and a booking link.
+**Top 10 by default**, ranked, each with true total cost, 2–3 pros, 1–2
+**genuine** cons, and a booking link.
+
+The count is configurable two ways: a standing default in the profile
+(`Results per page`), and a per-request override in plain language — "show
+me the top 5" or "give me 20." The per-request value wins for that search
+and does not overwrite the profile default.
 
 Every option gets at least one real con. If no downside can be named, the
 listing has not been examined closely enough — a con-free recommendation is
@@ -239,12 +245,47 @@ close, say so rather than manufacturing a ranking gap.
 Include the price-check timestamp and state that prices are point-in-time
 and must be verified at booking.
 
+### 7. Paginate on request
+
+The search produces a full ranked candidate pool, of which only the first
+page is shown. A follow-up — "show me the next 10," "what else is there" —
+serves the next page **from the retained pool without re-searching**.
+
+Re-searching would be wrong here, not merely wasteful. Prices move, and
+providers return non-deterministic result sets, so a fresh query would
+produce a page 2 that is inconsistent with the page 1 already on screen and
+possibly duplicates it. Ranking a stay against its alternatives only works
+if every option was priced at the same moment.
+
+Rules:
+
+- **The saved trip file is the pool.** It records the complete ranked pool,
+  not just the shown page (see Output). Pagination reads from that file, so
+  "show me the next 10" works in a later session, not only in the turn that
+  ran the search.
+- **Never repeat a shown property.** Track which ranks have been presented.
+- **State the position.** Each page says where it sits — "11–20 of 34
+  candidates."
+- **Say when the pool runs dry.** If fewer than a full page remains, show
+  what is left and say so. If nothing remains, say the pool is exhausted
+  and offer the concrete ways to widen it: raise the budget ceiling, extend
+  the search radius, relax a hard gate, or shift dates.
+- **Re-search only when the parameters change.** Different dates, party
+  size, or budget make a new search, and the skill says so rather than
+  paginating into a stale pool.
+- **Quality declines down the list.** Page 3 is not page 1. When the
+  remaining candidates are materially weaker, say that plainly instead of
+  presenting rank 27 with the same confidence as rank 2.
+
 ## Output
 
 1. **Terminal** — ranked comparison table plus pros/cons. Always.
-2. **Saved markdown** — `trips/YYYY-MM-DD-<location>.md`, every run. Builds
-   a diffable record across searches for the same trip, which is how price
-   movement becomes visible.
+2. **Saved markdown** — `trips/YYYY-MM-DD-<location>.md`, every run. Holds
+   the **complete ranked pool**, not just the page shown, along with the
+   resolved search parameters and the price-check timestamp. This is what
+   makes pagination durable across sessions, and it builds a diffable
+   record across searches for the same trip, which is how price movement
+   becomes visible.
 3. **Artifact** — a shareable comparison page, on request only. Note that
    artifact CSP blocks remote images, so these pages carry text, prices,
    and links, never property photos.
@@ -296,3 +337,13 @@ reconciling its output against reality. Three scenarios:
 For each: open the actual booking pages and check the skill's totals
 reconcile. Also test the degraded path by disabling one provider and
 confirming the failure is loud.
+
+Two additional checks on pagination:
+
+4. **Next page in the same session** — after a search, ask for the next 10.
+   Confirm it serves ranks 11–20 from the pool with no re-search, repeats
+   nothing from page 1, and reports its position in the pool.
+5. **Next page in a later session** — start fresh, ask for more results on a
+   saved trip. Confirm the skill reads the saved pool rather than
+   re-searching, and that exhausting the pool produces the widen-the-search
+   options rather than a silent stop.
