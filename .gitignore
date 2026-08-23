@@ -216,7 +216,3 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-
-# Saved lodging searches — may contain trip details
-lodging-search/trips/*
-!lodging-search/trips/.gitkeep

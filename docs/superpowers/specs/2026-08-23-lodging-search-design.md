@@ -262,7 +262,10 @@ Rules:
 - **The saved trip file is the pool.** It records the complete ranked pool,
   not just the shown page (see Output). Pagination reads from that file, so
   "show me the next 10" works in a later session, not only in the turn that
-  ran the search.
+  ran the search. A later session has no page 1 on screen to continue from,
+  so it locates the file by globbing `~/.claude/lodging-trips/` for the
+  location, takes the most recently modified match, and states which trip
+  it resumed before serving the next page.
 - **Never repeat a shown property.** Track which ranks have been presented.
 - **State the position.** Each page says where it sits — "11–20 of 34
   candidates."
@@ -280,12 +283,13 @@ Rules:
 ## Output
 
 1. **Terminal** — ranked comparison table plus pros/cons. Always.
-2. **Saved markdown** — `trips/YYYY-MM-DD-<location>.md`, every run. Holds
-   the **complete ranked pool**, not just the page shown, along with the
-   resolved search parameters and the price-check timestamp. This is what
-   makes pagination durable across sessions, and it builds a diffable
-   record across searches for the same trip, which is how price movement
-   becomes visible.
+2. **Saved markdown** — `~/.claude/lodging-trips/YYYY-MM-DD-<location>.md`,
+   every run, where `YYYY-MM-DD` is the date the search was run, not the
+   check-in date. Holds the **complete ranked pool**, not just the page
+   shown, along with the resolved search parameters and the price-check
+   timestamp. This is what makes pagination durable across sessions, and
+   it builds a diffable record across searches for the same trip, which is
+   how price movement becomes visible.
 3. **Artifact** — a shareable comparison page, on request only. Note that
    artifact CSP blocks remote images, so these pages carry text, prices,
    and links, never property photos.
@@ -299,10 +303,13 @@ lodging-search/
     profile.template.md       # copied to ~/.claude/lodging-profile.md
     ranking.md                # scoring rubric, perk dollar values, gates
     mcp-setup.md              # per-provider install + health check
-  trips/                      # gitignored
 ```
 
-Add `lodging-search/trips/` to `.gitignore`.
+Trip files live at `~/.claude/lodging-trips/`, outside the repo. The
+skill's own directory may be a read-only plugin cache once installed, and
+a repo-relative path breaks entirely once the skill is installed outside
+this repo — `~/.claude/` already holds the user profile, so trip files
+join it there rather than being gitignored inside the skill tree.
 
 ## Risks
 
