@@ -503,6 +503,23 @@ class TestApplyGates(unittest.TestCase):
         result = apply_gates(_candidate(sleeps=2, party_size=5, available=False))
         self.assertFalse(result["passes"])
         self.assertEqual(len(result["eliminated_by"]), 2)
+
+
+class TestConstantsMatchRankingDoc(unittest.TestCase):
+    """references/ranking.md documents these same values in prose.
+
+    Pin them here so the code and the doc cannot drift apart silently.
+    """
+
+    def test_rental_floors_are_stricter_than_hotel_floor(self):
+        self.assertEqual(CHANNEL_RATING_FLOORS["airbnb"], 4.5)
+        self.assertEqual(CHANNEL_RATING_FLOORS["vrbo"], 4.5)
+        self.assertEqual(CHANNEL_RATING_FLOORS["hotel"], 4.0)
+        self.assertGreater(CHANNEL_RATING_FLOORS["airbnb"],
+                           CHANNEL_RATING_FLOORS["hotel"])
+
+    def test_thin_review_threshold_matches_doc(self):
+        self.assertEqual(THIN_REVIEW_THRESHOLD, 10)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -572,7 +589,7 @@ def apply_gates(candidate, budget_ceiling=None):
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m unittest discover -s lodging-search/tests -v`
-Expected: PASS, 32 tests
+Expected: PASS, 34 tests
 
 - [ ] **Step 5: Commit**
 
@@ -673,12 +690,16 @@ near dates. Distinguish two failures and report them differently:
 Never let the second explanation cover for the first.
 ````
 
-- [ ] **Step 2: Verify the file is valid markdown with all three capabilities named**
+- [ ] **Step 2: Verify all three capabilities are named in the file**
 
 ```bash
-grep -c 'airbnb_search\|vrbo_search\|hotel_search' lodging-search/references/mcp-setup.md
+for cap in airbnb_search vrbo_search hotel_search; do
+  grep -q "$cap" lodging-search/references/mcp-setup.md \
+    || { echo "MISSING: $cap"; exit 1; }
+done
+echo "all three capabilities documented"
 ```
-Expected: at least 6 matches (table plus prose)
+Expected: `all three capabilities documented`
 
 - [ ] **Step 3: Commit**
 
@@ -1051,7 +1072,7 @@ Expected: `SKILL.md OK`
 - [ ] **Step 3: Run the full test suite to confirm nothing regressed**
 
 Run: `python3 -m unittest discover -s lodging-search/tests -v`
-Expected: PASS, 32 tests
+Expected: PASS, 34 tests
 
 - [ ] **Step 4: Commit**
 
@@ -1169,7 +1190,7 @@ Expected: `OK: profile not tracked` and `OK: trips ignored`
 - [ ] **Step 4: Run the full suite one final time**
 
 Run: `python3 -m unittest discover -s lodging-search/tests -v`
-Expected: PASS, 32 tests
+Expected: PASS, 34 tests
 
 - [ ] **Step 5: Commit**
 
