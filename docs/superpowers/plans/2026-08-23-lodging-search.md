@@ -29,7 +29,7 @@ Copied verbatim from the spec. Every task's requirements implicitly include this
 
 - **Python is stdlib-only.** No pip installs, no third-party imports. Tests use `unittest`.
 - **The real profile lives at `~/.claude/lodging-profile.md`, outside this repository.** The repo is public. Never commit a populated profile, loyalty account standing, or children's ages.
-- **`lodging-search/trips/` is gitignored.**
+- **Trip files live at `~/.claude/lodging-trips/`, outside the repo.** Filenames use the search date, not check-in date.
 - **Noisy failure.** A missing or broken capability is stated plainly with its install command. Never return a quiet half-search presented as complete.
 - **Never blend perk value into price.** Report `total_cost` and `effective_cost_after_perks` as two separate numbers.
 - **Prefer the provider's total.** Use a provider's all-in total when present and label it authoritative. Compose from parts only when absent, and mark composed figures as estimates with `~`.
@@ -51,7 +51,6 @@ once hotels are priced at two rooms, rentals often win outright.
 **Files:**
 - Create: `lodging-search/scripts/lodging_calc.py`
 - Create: `lodging-search/tests/test_lodging_calc.py`
-- Create: `lodging-search/trips/.gitkeep`
 - Modify: `.gitignore`
 
 **Interfaces:**
@@ -61,9 +60,7 @@ once hotels are priced at two rooms, rentals often win outright.
 - [ ] **Step 1: Create directories and gitignore entry**
 
 ```bash
-mkdir -p lodging-search/scripts lodging-search/tests lodging-search/trips
-touch lodging-search/trips/.gitkeep
-printf '\n# Saved lodging searches — may contain trip details\nlodging-search/trips/*\n!lodging-search/trips/.gitkeep\n' >> .gitignore
+mkdir -p lodging-search/scripts lodging-search/tests
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -503,6 +500,23 @@ class TestApplyGates(unittest.TestCase):
         result = apply_gates(_candidate(sleeps=2, party_size=5, available=False))
         self.assertFalse(result["passes"])
         self.assertEqual(len(result["eliminated_by"]), 2)
+
+
+class TestConstantsMatchRankingDoc(unittest.TestCase):
+    """references/ranking.md documents these same values in prose.
+
+    Pin them here so the code and the doc cannot drift apart silently.
+    """
+
+    def test_rental_floors_are_stricter_than_hotel_floor(self):
+        self.assertEqual(CHANNEL_RATING_FLOORS["airbnb"], 4.5)
+        self.assertEqual(CHANNEL_RATING_FLOORS["vrbo"], 4.5)
+        self.assertEqual(CHANNEL_RATING_FLOORS["hotel"], 4.0)
+        self.assertGreater(CHANNEL_RATING_FLOORS["airbnb"],
+                           CHANNEL_RATING_FLOORS["hotel"])
+
+    def test_thin_review_threshold_matches_doc(self):
+        self.assertEqual(THIN_REVIEW_THRESHOLD, 10)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -572,7 +586,7 @@ def apply_gates(candidate, budget_ceiling=None):
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python3 -m unittest discover -s lodging-search/tests -v`
-Expected: PASS, 32 tests
+Expected: PASS, 34 tests
 
 - [ ] **Step 5: Commit**
 
@@ -673,12 +687,16 @@ near dates. Distinguish two failures and report them differently:
 Never let the second explanation cover for the first.
 ````
 
-- [ ] **Step 2: Verify the file is valid markdown with all three capabilities named**
+- [ ] **Step 2: Verify all three capabilities are named in the file**
 
 ```bash
-grep -c 'airbnb_search\|vrbo_search\|hotel_search' lodging-search/references/mcp-setup.md
+for cap in airbnb_search vrbo_search hotel_search; do
+  grep -q "$cap" lodging-search/references/mcp-setup.md \
+    || { echo "MISSING: $cap"; exit 1; }
+done
+echo "all three capabilities documented"
 ```
-Expected: at least 6 matches (table plus prose)
+Expected: `all three capabilities documented`
 
 - [ ] **Step 3: Commit**
 
@@ -982,10 +1000,11 @@ at the same moment.
 ## Output
 
 1. **Terminal** — the ranked page plus pros/cons. Always.
-2. **Saved markdown** — `lodging-search/trips/YYYY-MM-DD-<location>.md`,
-   every run. Holds the **complete ranked pool**, not just the shown page,
-   plus resolved parameters and the price-check timestamp. This is what
-   makes pagination work in a later session.
+2. **Saved markdown** — `~/.claude/lodging-trips/YYYY-MM-DD-<location>.md`,
+   every run, where `YYYY-MM-DD` is the search date. Holds the **complete
+   ranked pool**, not just the shown page, plus resolved parameters and
+   the price-check timestamp. This is what makes pagination work in a
+   later session.
 3. **Artifact** — a shareable comparison page, on request only. Artifact
    CSP blocks remote images, so these carry text, prices, and links, never
    property photos.
@@ -1051,7 +1070,7 @@ Expected: `SKILL.md OK`
 - [ ] **Step 3: Run the full test suite to confirm nothing regressed**
 
 Run: `python3 -m unittest discover -s lodging-search/tests -v`
-Expected: PASS, 32 tests
+Expected: PASS, 34 tests
 
 - [ ] **Step 4: Commit**
 
@@ -1162,14 +1181,13 @@ EOF
 
 ```bash
 git ls-files | grep -i "lodging-profile" && echo "FAIL: profile is tracked" || echo "OK: profile not tracked"
-git check-ignore lodging-search/trips/scratch.md && echo "OK: trips ignored"
 ```
-Expected: `OK: profile not tracked` and `OK: trips ignored`
+Expected: `OK: profile not tracked`
 
 - [ ] **Step 4: Run the full suite one final time**
 
 Run: `python3 -m unittest discover -s lodging-search/tests -v`
-Expected: PASS, 32 tests
+Expected: PASS, 34 tests
 
 - [ ] **Step 5: Commit**
 
