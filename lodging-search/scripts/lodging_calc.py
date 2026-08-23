@@ -35,3 +35,83 @@ def rooms_needed(adults, kids_ages, max_occupancy=MAX_OCCUPANCY_DEFAULT,
         "verify_infant_policy": len(infants) > 0,
         "forces_multi_room": rooms > 1,
     }
+
+
+DEFAULT_SERVICE_FEE_RATE = 0.14
+
+
+def rental_total(nightly_rate, nights, cleaning_fee=0.0,
+                 service_fee_rate=DEFAULT_SERVICE_FEE_RATE, tax_rate=0.0,
+                 pet_fee=0.0, discount=0.0, provider_total=None):
+    """All-in cost of a rental stay.
+
+    Tax applies to the nightly subtotal plus cleaning and service fees.
+    Pet fees are treated as untaxed. Jurisdictions vary; these are the
+    documented assumptions, and provider_total always wins when present.
+    """
+    if nights < 1:
+        raise ValueError("nights must be at least 1")
+
+    subtotal = nightly_rate * nights - discount
+    service_fee = subtotal * service_fee_rate
+    taxable = subtotal + cleaning_fee + service_fee
+    taxes = taxable * tax_rate
+    composed = taxable + taxes + pet_fee
+
+    breakdown = {
+        "nightly_subtotal": round(subtotal, 2),
+        "cleaning_fee": round(cleaning_fee, 2),
+        "service_fee": round(service_fee, 2),
+        "taxes": round(taxes, 2),
+        "pet_fee": round(pet_fee, 2),
+        "discount": round(discount, 2),
+    }
+
+    if provider_total is not None:
+        return {"total": round(provider_total, 2), "is_estimate": False,
+                "breakdown": breakdown}
+    return {"total": round(composed, 2), "is_estimate": True,
+            "breakdown": breakdown}
+
+
+def hotel_total(nightly_rate, nights, rooms=1, resort_fee_per_night=0.0,
+                parking_per_night=0.0, tax_rate=0.0, provider_total=None):
+    """All-in cost of a hotel stay across the rooms the party requires.
+
+    Resort fees are charged per room per night and are taxed. Parking is
+    charged per stay rather than per room, assuming one family vehicle.
+    """
+    if nights < 1:
+        raise ValueError("nights must be at least 1")
+    if rooms < 1:
+        raise ValueError("rooms must be at least 1")
+
+    room_subtotal = nightly_rate * nights * rooms
+    resort_fees = resort_fee_per_night * nights * rooms
+    taxable = room_subtotal + resort_fees
+    taxes = taxable * tax_rate
+    parking = parking_per_night * nights
+    composed = taxable + taxes + parking
+
+    breakdown = {
+        "room_subtotal": round(room_subtotal, 2),
+        "resort_fees": round(resort_fees, 2),
+        "taxes": round(taxes, 2),
+        "parking": round(parking, 2),
+        "rooms": rooms,
+    }
+
+    if provider_total is not None:
+        return {"total": round(provider_total, 2), "is_estimate": False,
+                "breakdown": breakdown}
+    return {"total": round(composed, 2), "is_estimate": True,
+            "breakdown": breakdown}
+
+
+def effective_cost(total, perk_value):
+    """Cost after loyalty perks, reported alongside total — never instead of it.
+
+    Blending perk value into the price makes output impossible to reconcile
+    against a booking page, which destroys trust in every other number.
+    """
+    return round(max(0.0, total - perk_value), 2)
