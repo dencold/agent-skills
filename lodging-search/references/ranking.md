@@ -8,6 +8,12 @@ Computed by `scripts/lodging_calc.py::apply_gates`:
 - Exceeds the stated budget ceiling
 - Unavailable for the requested dates
 - Rating below the per-channel floor, after normalizing to a 5-point scale
+  (unrated listings — no rating available — skip this gate and are flagged
+  `unrated` instead of eliminated)
+
+Applied by hand from the profile, not by `apply_gates` — the candidate
+dict carries no amenity data:
+
 - Any profile "Must have" amenity is absent
 
 Rating floors: Airbnb and VRBO 4.5, hotels 4.0. A 4.0 hotel is
@@ -15,6 +21,21 @@ unremarkable; a 4.0 Airbnb is a warning.
 
 Thin review history (under 10 reviews) is a **flag, not a gate**. Rank it
 slightly lower and name it as one of the property's cons.
+
+### Candidate dict shape
+
+`apply_gates(candidate, budget_ceiling=None)` expects `candidate` to carry:
+
+| Key | Type | Notes |
+|---|---|---|
+| `channel` | str | One of `"airbnb"`, `"vrbo"`, `"hotel"` (case-insensitive; normalized internally). Any other value raises `ValueError` — a typo or an unmapped provider label must be surfaced, not silently given the most permissive floor. |
+| `total` | float | True total cost, from `rental_total()`/`hotel_total()` |
+| `rating` | float or `None` | Provider rating; `None` or absent means unrated, not zero |
+| `rating_scale` | int | `5` or `10`; defaults to `5` if omitted |
+| `review_count` | int | Defaults to `0` if omitted |
+| `sleeps` | int | Max occupancy of the listing |
+| `party_size` | int | Total party size for this search |
+| `available` | bool | Defaults to `True` if omitted |
 
 ## Weighted scoring for survivors
 

@@ -7,14 +7,13 @@ standing and children's ages do not belong in it.
 
 ## Household
 - Adults: 2
-- Kids: ages 6, 9   <!-- update annually -->
+- Kids: ages <age>, <age>   <!-- update annually -->
 - Notes: early bedtimes; need room-darkening or a separate sleeping space
 
 ## Hotel loyalty
 <!-- The perks matter more than the tier name: the skill converts status
      into dollars, so list what the tier actually delivers. -->
-- Marriott Bonvoy — Titanium — lounge access, suite upgrades, late checkout, free breakfast for 2
-- Hilton Honors — Gold — free breakfast, room upgrade
+- <Program> — <tier> — <perks that tier actually delivers>
 
 ## Brand preferences
 - Prefer:

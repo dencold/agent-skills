@@ -31,9 +31,11 @@ hotel is worse than no shortlist, because it looks finished.
 
 Fill gaps from the profile; ask only for what remains.
 
-Needed: adults, kids **with ages**, check-in and check-out, location,
-budget ceiling for the stay, and the trip anchor (the thing the trip is
-organized around — a beach, a venue, grandma's house).
+Needed: adults, kids **with ages**, check-in and check-out, location, and
+the trip anchor (the thing the trip is organized around — a beach, a
+venue, grandma's house). Budget ceiling for the stay is optional but
+worth prompting for — don't block the search on a user without a number
+in mind.
 
 Convert relative dates ("spring break") to absolute ones. Confirm the
 resolved parameters back in one line before searching; a wrong date range
@@ -70,14 +72,24 @@ Query `airbnb_search`, `vrbo_search`, and `hotel_search` concurrently with
 the resolved party size and dates. Hotels are searched at `rooms` from
 step 2. Deduplicate cross-listed properties per `references/mcp-setup.md`.
 
+A channel that returns zero results is not automatically a healthy
+"nothing available" — see the blocked-vs-genuinely-empty distinction in
+`references/mcp-setup.md` and report the two differently.
+
 ## 4. Normalize to true total cost
 
 Never compare nightly rates. Use `scripts/lodging_calc.py`:
-`rental_total()` and `hotel_total()`.
+`rental_total()` and `hotel_total()` for the all-in total, then
+`effective_cost()` to apply loyalty perk value on top of it.
 
 Pass `provider_total` whenever the provider returned an all-in figure — it
 wins and is authoritative. Only compose from parts when it is absent, and
 mark composed figures with `~` in output, since `is_estimate` will be true.
+
+Only include a parking cost for hotels when the party is driving —
+`hotel_total`'s `parking_per_night` should be left at its default
+otherwise. Check the profile's `Driving or flying` field before pricing
+parking in.
 
 This step exists to catch one inversion: a $180/night rental with a $200
 cleaning fee loses to a $210/night hotel over three nights.
