@@ -1,5 +1,9 @@
 # Lodging Search Skill — Design
 
+> **Renamed 2026-08-23:** the skill shipped as **`lodging-scout`**, in
+> `lodging-scout/`. This document predates the rename and refers to it
+> throughout as `lodging-search`; read those as the same skill.
+
 **Date:** 2026-08-23
 **Status:** Approved for planning
 

@@ -1,5 +1,9 @@
 # Lodging Search Skill Implementation Plan
 
+> **Renamed 2026-08-23:** the skill shipped as **`lodging-scout`**, in
+> `lodging-scout/`. This document predates the rename and refers to it
+> throughout as `lodging-search`; read those as the same skill.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a Claude skill that searches hotels, Airbnb, and VRBO for a given party, dates, and location, then returns the top 10 ranked stays with true total-stay cost and honest pros/cons.
