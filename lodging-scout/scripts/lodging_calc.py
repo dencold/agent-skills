@@ -1,4 +1,4 @@
-"""Deterministic arithmetic for the lodging-search skill.
+"""Deterministic arithmetic for the lodging-scout skill.
 
 Occupancy, fee normalization, rating normalization, and hard gates live
 here rather than being done freehand, because the skill's totals must

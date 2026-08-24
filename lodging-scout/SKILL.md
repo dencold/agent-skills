@@ -1,5 +1,5 @@
 ---
-name: lodging-search
+name: lodging-scout
 description: Use when planning where to stay on a trip — searches hotels, Airbnb, and VRBO for a given party, dates, and location, then returns ranked stays with true total-stay cost and honest pros and cons. Accounts for hotel loyalty status, brand preferences, and family amenities like pools.
 ---
 
