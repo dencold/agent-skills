@@ -10,6 +10,20 @@ any specific one.
 | `vrbo_search` | VRBO listings and details |
 | `hotel_search` | Hotel rates |
 
+## Where the config goes
+
+- **Claude Code** — `claude mcp add <name> -- npx -y <package>` for a local
+  server, `claude mcp add --transport http <name> <url>` for a hosted one.
+  Add `-s user` to make it available in every project instead of just this
+  one. The JSON blocks below are the same thing by hand, in `~/.claude.json`
+  (personal) or a project `.mcp.json`.
+- **Claude for Mac** — Settings → Developer → Edit Config, which opens
+  `~/Library/Application Support/Claude/claude_desktop_config.json`. Restart
+  the app afterward. Servers shipping an `.mcpb` bundle install by
+  double-clicking instead.
+- **claude.ai and mobile** — hosted servers only, added under Connectors. A
+  local `npx` server cannot run there.
+
 ## Known providers, as of 2026-08
 
 ### Airbnb — `@openbnb/mcp-server-airbnb`
@@ -44,6 +58,8 @@ configurable; DuckDuckGo is the free option.
 - `hotel-goat` — Google Hotels plus Trivago, OTA-aggregated rates, no API key
 - `hotels-skill` — Booking.com via Playwright, no API key
 - HotelZero — Booking.com via Playwright, 80+ filters
+- trivago — hosted MCP at `https://mcp.trivago.com/mcp`, no API key;
+  the only hotel option that also works on claude.ai and mobile
 
 ## Preference order
 
