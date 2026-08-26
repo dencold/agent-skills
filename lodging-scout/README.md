@@ -4,7 +4,9 @@ Searches hotels, Airbnb, and VRBO for a party, dates, and location, then
 returns ranked stays with true total-stay cost and honest pros and cons.
 Accounts for hotel loyalty status, brand preferences, and family amenities.
 
-Installation instructions are in the [repo README](../README.md#installing-a-skill).
+Note that this skill is best used in Claude Code — it requires local MCP 
+servers and the profile in `~/.claude/`. See the note in [the top-level README](../README.md#lodging-scout) 
+for more details.
 
 ## Requires
 

@@ -29,15 +29,6 @@ list its skills to confirm.
 
 ### Claude desktop app (macOS) and claude.ai
 
-> **`lodging-scout` is substantially degraded on these surfaces.** Skills
-> here cannot spawn local processes, so they see only hosted MCP servers
-> added under Connectors. Both Airbnb providers and the VRBO provider are
-> local `npx` servers, and no hosted equivalent exists as of 2026-08. That
-> leaves hotels only — via trivago's hosted server — which removes the
-> cross-channel comparison the skill exists to do. Verified by attempting
-> the install: `airbnb_search` never loads. Install this one in Claude
-> Code.
-
 Upload a zip whose **root is the skill folder**, not the files themselves.
 
 1. Settings → Capabilities → enable **Code execution and file creation**.
@@ -81,9 +72,9 @@ above, for the same reason.
 A skill is instructions plus code that Claude will execute. Read the SKILL.md
 and any bundled scripts before installing one you did not write.
 
-## Skills
+## The Skills
 
-### [lodging-scout](lodging-scout/)
+### lodging-scout
 
 Searches hotels, Airbnb, and VRBO for a party, dates, and location, then
 returns ranked stays with true total-stay cost and honest pros and cons.
@@ -92,6 +83,11 @@ Accounts for hotel loyalty status, brand preferences, and family amenities.
 Needs Python 3, `npx`, and three MCP providers — setup and verification steps
 are in the [skill's README](lodging-scout/README.md).
 
-**Claude Code only.** Two of its three search providers run as local `npx`
-processes, which claude.ai, the desktop app, and mobile cannot launch. See
-[Claude desktop app and claude.ai](#claude-desktop-app-macos-and-claudeai).
+**Claude Code only.** This skill relies on local `npx` servers for Airbnb
+and VRBO searches, and no hosted equivalent exists as of 2026-08. Skills on
+claude.ai and the desktop app cannot spawn local processes, so they see only 
+hosted MCP servers added in the official Connectors section. With that limitation, 
+`lodging-scout` can only access hotel pricing — via trivago's hosted server — which 
+removes the cross-channel comparison the skill exists to do.
+
+Install this skill in Claude Code for full functionality.
