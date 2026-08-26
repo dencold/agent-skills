@@ -29,6 +29,15 @@ list its skills to confirm.
 
 ### Claude desktop app (macOS) and claude.ai
 
+> **`lodging-scout` is substantially degraded on these surfaces.** Skills
+> here cannot spawn local processes, so they see only hosted MCP servers
+> added under Connectors. Both Airbnb providers and the VRBO provider are
+> local `npx` servers, and no hosted equivalent exists as of 2026-08. That
+> leaves hotels only — via trivago's hosted server — which removes the
+> cross-channel comparison the skill exists to do. Verified by attempting
+> the install: `airbnb_search` never loads. Install this one in Claude
+> Code.
+
 Upload a zip whose **root is the skill folder**, not the files themselves.
 
 1. Settings → Capabilities → enable **Code execution and file creation**.
@@ -64,7 +73,8 @@ it there.
 What a mobile session cannot do: run local MCP servers (anything launched with
 `npx`) or read files under `~/.claude/`. Remote MCP connectors do work. For
 `lodging-scout` that means mobile has no profile and, unless you have added a
-hosted hotel connector, no search providers.
+hosted hotel connector, no search providers — the same limitation described
+above, for the same reason.
 
 ### Trust
 
@@ -81,3 +91,7 @@ Accounts for hotel loyalty status, brand preferences, and family amenities.
 
 Needs Python 3, `npx`, and three MCP providers — setup and verification steps
 are in the [skill's README](lodging-scout/README.md).
+
+**Claude Code only.** Two of its three search providers run as local `npx`
+processes, which claude.ai, the desktop app, and mobile cannot launch. See
+[Claude desktop app and claude.ai](#claude-desktop-app-macos-and-claudeai).
