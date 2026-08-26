@@ -21,11 +21,14 @@ Read `~/.claude/lodging-profile.md`. If it does not exist, walk the user
 through creating one from `references/profile.template.md`, then continue.
 The profile lives outside this repo on purpose — see the template.
 
-Check the three capabilities in `references/mcp-setup.md`. If any is
-missing or broken, **say so plainly**, show the install command, and ask
-whether to proceed single-channel or stop. Never return a quiet
-half-search presented as complete — a shortlist that silently omits every
-hotel is worse than no shortlist, because it looks finished.
+Check the three capabilities in `references/mcp-setup.md`. Two are MCP
+tools (`airbnb_search`, `hotel_search`); VRBO has no working MCP provider
+and is read from `vrbo.com` through Claude in Chrome, so its check is that
+the browser tools exist at all. If any capability is missing or broken,
+**say so plainly**, show the fix, and ask whether to proceed
+single-channel or stop. Never return a quiet half-search presented as
+complete — a shortlist that silently omits every hotel is worse than no
+shortlist, because it looks finished.
 
 ## 1. Resolve inputs
 
@@ -68,13 +71,26 @@ those as a distinct option.
 
 ## 3. Search all three channels in parallel
 
-Query `airbnb_search`, `vrbo_search`, and `hotel_search` concurrently with
-the resolved party size and dates. Hotels are searched at `rooms` from
-step 2. Deduplicate cross-listed properties per `references/mcp-setup.md`.
+Two channels are MCP calls that return in seconds; VRBO is a browser
+session that takes several round trips. Start them in the **same tool
+block** — `airbnb_search`, `hotel_search`, and the VRBO `navigate` — so
+the page is loading while the MCP results come back. Running the browser
+after the MCP calls finish wastes the only overlap available and roughly
+doubles the wait.
+
+Hotels are searched at `rooms` from step 2. Deduplicate cross-listed
+properties per `references/mcp-setup.md`.
+
+VRBO's search URL, its load-timing trap, and how to read totals off the
+cards are in `references/mcp-setup.md` — follow it rather than improvising
+selectors. Its cards carry an all-in figure, so VRBO results are a real
+`provider_total`, not a composed estimate.
 
 A channel that returns zero results is not automatically a healthy
 "nothing available" — see the blocked-vs-genuinely-empty distinction in
-`references/mcp-setup.md` and report the two differently.
+`references/mcp-setup.md` and report the two differently. For VRBO the
+distinction is sharper: an empty accessibility tree usually means the page
+had not finished rendering, which is neither a block nor a real vacancy.
 
 ## 4. Normalize to true total cost
 
@@ -169,7 +185,7 @@ at the same moment.
 **Party:** N adults, M kids (ages ...) — rooms needed: R
 **Budget ceiling:** $X
 **Anchor:** <trip anchor>
-**Providers used:** airbnb_search (openbnb), vrbo_search (printing-press), hotel_search (hotel-goat)
+**Providers used:** airbnb_search (openbnb), VRBO (Claude in Chrome), hotel_search (trivago)
 **Shown through rank:** 10
 
 ## Ranked pool
