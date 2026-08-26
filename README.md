@@ -34,18 +34,26 @@ Upload a zip whose **root is the skill folder**, not the files themselves.
 1. Settings → Capabilities → enable **Code execution and file creation**.
    Skills do not run without it. On Team/Enterprise an owner enables it
    org-wide first.
-2. Package it:
+2. Package it with `package-skill.sh`, which takes the skill's directory
+   name and writes `deploy/<skill>.zip`:
 
    ```bash
    cd ~/src/agent-skills
-   zip -r lodging-scout.zip lodging-scout -x '*/__pycache__/*' '*.pyc'
+   ./package-skill.sh lodging-scout
    ```
+
+   It builds the archive with the skill folder as the root, drops
+   `__pycache__/` and `*.pyc`, creates `deploy/` on first run, and fully
+   replaces an existing zip rather than adding to it. Run it with no
+   arguments, or with a name that is not a skill, and it lists what is
+   available. `deploy/` is gitignored.
 
 3. Customize → Skills → **+** → Create skill → Upload a skill → pick the zip.
 4. Toggle the skill on.
 
 Uploaded skills are private to your own account — not shared org-wide, not
-centrally managed. There is no pull: re-zip and re-upload to update.
+centrally managed. There is no pull: re-run the script and re-upload to
+update.
 
 ### Claude mobile app (iOS / Android)
 
