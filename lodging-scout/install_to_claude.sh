@@ -19,6 +19,7 @@ fi
 claude_dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 skill_dir=$claude_dir/skills/lodging-scout
 profile=$claude_dir/lodging-profile.md
+trips_dir=$claude_dir/lodging-trips
 
 # Everything the skill reads at runtime. Tests, the repo README, and build
 # leftovers are deliberately absent -- they are not part of the skill.
@@ -98,6 +99,14 @@ print "  vrbo: served by Claude in Chrome, nothing to install"
 # earn the extra moving parts while this one is healthy.
 print "\nInstalling hotel provider"
 add_server trivago claude mcp add -s user --transport http trivago https://mcp.trivago.com/mcp
+
+print "\nTrip output"
+if [[ -d $trips_dir ]]; then
+    print "  $trips_dir exists -- left untouched"
+else
+    mkdir -p $trips_dir
+    print "  $trips_dir created"
+fi
 
 print "\nProfile"
 if [[ -f $profile ]]; then
