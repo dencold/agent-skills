@@ -7,7 +7,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 
 from parse import (
     Account, AmbiguousAccountError, MalformedRowError, UnknownFileError,
-    load_accounts, match_account, parse_file, parse_folder,
+    load_accounts, match_account, parse_file, parse_folder, _to_decimal,
 )
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
@@ -93,6 +93,42 @@ class TestParseFile(unittest.TestCase):
             self.assertEqual(ctx.exception.line_number, 2)
         finally:
             bad.unlink()
+
+    def test_blank_amount_halts_with_the_line_number(self):
+        bad = FIXTURES.parent / "bad_amount.csv"
+        bad.write_text("Transaction Date,Post Date,Description,Amount\n"
+                       "08/04/2026,08/05/2026,COFFEE,\n")
+        try:
+            with self.assertRaises(MalformedRowError) as ctx:
+                parse_file(bad, self.accounts[0])
+            self.assertEqual(ctx.exception.line_number, 2)
+        finally:
+            bad.unlink()
+
+    def test_parenthesized_negative_flips_through_negative_is_charge(self):
+        paren = FIXTURES.parent / "paren_amount.csv"
+        paren.write_text("Transaction Date,Post Date,Description,Amount\n"
+                          "08/04/2026,08/05/2026,COFFEE,(6.50)\n")
+        try:
+            rows = parse_file(paren, self.accounts[0])
+            self.assertEqual(rows[0].amount, Decimal("6.50"))
+        finally:
+            paren.unlink()
+
+
+class TestToDecimal(unittest.TestCase):
+    def test_strips_dollar_sign(self):
+        self.assertEqual(_to_decimal("$14.25"), Decimal("14.25"))
+
+    def test_strips_thousands_comma(self):
+        self.assertEqual(_to_decimal("1,234.56"), Decimal("1234.56"))
+
+    def test_parses_parenthesized_negative(self):
+        self.assertEqual(_to_decimal("(6.50)"), Decimal("-6.50"))
+
+    def test_empty_string_raises(self):
+        with self.assertRaises(ValueError):
+            _to_decimal("")
 
 
 class TestParseFolder(unittest.TestCase):

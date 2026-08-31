@@ -111,10 +111,15 @@ def match_account(header, filename, accounts):
 
 
 def _to_decimal(raw):
-    """Parse a money string. Handles $, thousands commas, and (parenthesized)."""
+    """Parse a money string. Handles $, thousands commas, and (parenthesized).
+
+    An empty field raises rather than defaulting to zero: a blank amount
+    cell is a malformed row, not a $0 transaction, and parse_file's caller
+    turns this into a MalformedRowError with the file and line attached.
+    """
     text = (raw or "").strip().replace("$", "").replace(",", "")
     if not text:
-        return Decimal("0")
+        raise ValueError("empty amount")
     negative = text.startswith("(") and text.endswith(")")
     if negative:
         text = text[1:-1]
@@ -138,7 +143,7 @@ def parse_file(path, account):
 
             try:
                 amount = _to_decimal(record.get(account.amount_column))
-            except (InvalidOperation, TypeError) as exc:
+            except (InvalidOperation, TypeError, ValueError) as exc:
                 raise MalformedRowError(path.name, line_number, f"bad amount: {exc}") from exc
 
             # Output convention is charges positive. An account that reports
