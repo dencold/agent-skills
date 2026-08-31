@@ -112,7 +112,10 @@ def holdout_coverage(rows, month):
     have put in front of the user is not automation, even when the
     proposal turns out right.
     """
-    train = [r for r in rows if not r.timestamp.startswith(month)]
+    # Strictly before the holdout month -- rows from later months must not
+    # leak into training, or a merchant unknown at the time would falsely
+    # look known when scoring a mid-file month.
+    train = [r for r in rows if r.timestamp[:7] < month]
     test = [r for r in rows if r.timestamp.startswith(month)]
 
     entries, _ = build_map(train)
@@ -127,9 +130,10 @@ def holdout_coverage(rows, month):
             if decision.proposed == expected:
                 correct += 1
             else:
-                misses.append((decision.merchant, expected, decision.proposed))
+                misses.append((decision.merchant, expected, decision.proposed, "wrong"))
         else:
-            misses.append((decision.merchant, expected, decision.proposed or "(no match)"))
+            misses.append((decision.merchant, expected,
+                            decision.proposed or "(no match)", "review"))
 
     return {
         "train_rows": len(train),
@@ -184,8 +188,12 @@ def main(argv=None):
         print(f"  auto-categorized correctly: {result['correct']} "
               f"({result['coverage']:.0%})")
         print(f"  needed review: {result['test_rows'] - result['auto_assigned']}")
-        for merchant, expected, got in result["misses"][:20]:
-            print(f"    {merchant}: expected {expected}, got {got}")
+        for merchant, expected, got, reason in result["misses"][:20]:
+            if reason == "wrong":
+                print(f"    {merchant}: expected {expected}, got {got}")
+            else:
+                print(f"    {merchant}: flagged for review "
+                      f"(would propose {got}, actual {expected})")
         return 0
 
     entries, report = build_map(rows, known_categories=known_categories)

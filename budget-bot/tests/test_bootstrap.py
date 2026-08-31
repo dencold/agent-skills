@@ -151,6 +151,31 @@ class TestHoldout(unittest.TestCase):
         self.assertEqual(result["test_rows"], 0)
         self.assertEqual(result["coverage"], 0.0)
 
+    def test_data_after_the_holdout_month_does_not_leak_into_training(self):
+        # A holdout month that is not the last one in the file: rows from
+        # a later month must not backfill the map, or a merchant that was
+        # genuinely unknown at holdout time would look known.
+        rows = rows_for("NEWCAFE", "Dining", 5, year="2026", month="08") + \
+               rows_for("NEWCAFE", "Dining", 2, year="2026", month="06")
+        result = holdout_coverage(rows, "2026-06")
+        self.assertEqual(result["test_rows"], 2)
+        self.assertEqual(result["correct"], 0)
+        self.assertEqual(result["coverage"], 0.0)
+
+    def test_ambiguous_merchants_correct_guess_does_not_count_as_coverage(self):
+        # Training data with a genuine split (>=20% share, >=3 occurrences
+        # for the runner-up) makes the merchant ambiguous, so the map's
+        # exact-tier proposal is flagged for review rather than silent --
+        # even though its guess happens to match the holdout row's actual
+        # category, it must not count as automated coverage.
+        rows = rows_for("COSTCO WHSE", "Grocery", 18, year="2026", month="03") + \
+               rows_for("COSTCO WHSE", "Household", 13, year="2026", month="04") + \
+               rows_for("COSTCO WHSE", "Grocery", 1, year="2026", month="07")
+        result = holdout_coverage(rows, "2026-07")
+        self.assertEqual(result["test_rows"], 1)
+        self.assertEqual(result["auto_assigned"], 0)
+        self.assertEqual(result["correct"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
