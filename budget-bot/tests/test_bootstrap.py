@@ -1,14 +1,17 @@
 import sys
 import pathlib
+import tempfile
 import unittest
 from decimal import Decimal
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 
+import bootstrap
 from bootstrap import (
     AMBIGUITY_MINORITY_COUNT, build_map,
 )
-from ledger import Row
+from ledger import Row, write_ledger
 
 
 def rows_for(merchant, category, count, month="01", year="2025"):
@@ -55,8 +58,14 @@ class TestBuildMap(unittest.TestCase):
         rows = rows_for("SPROUTS", "Dining", 24, year="2024") + \
                rows_for("SPROUTS", "Grocery", 5, year="2026", month="08")
         entries, report = build_map(rows)
-        self.assertEqual(entries["SPROUTS"].category, "Grocery")
+        entry = entries["SPROUTS"]
+        self.assertEqual(entry.category, "Grocery")
         self.assertIn("SPROUTS", report.recency_overrides)
+        # The superseded majority is settled history, not a live split --
+        # it must not surface as an alternate or trip the ambiguity flag.
+        self.assertFalse(entry.ambiguous)
+        self.assertEqual(entry.alternates, {})
+        self.assertEqual(entry.describe(), "Grocery")
 
     def test_blank_and_unknown_categories_are_reported_not_imported(self):
         rows = rows_for("SAFEWAY", "Grocery", 5) + \
@@ -67,6 +76,47 @@ class TestBuildMap(unittest.TestCase):
         self.assertNotIn("TYPO SHOP", entries)
         self.assertEqual(report.blank_category_rows, 2)
         self.assertEqual(report.unknown_categories, {"Groceries": 3})
+
+
+class TestMainCategoriesFlag(unittest.TestCase):
+    def test_categories_file_is_parsed_and_reaches_build_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+
+            history_path = tmp_path / "history.csv"
+            write_ledger(history_path, rows_for("SAFEWAY", "Grocery", 3))
+
+            categories_path = tmp_path / "categories.txt"
+            categories_path.write_text(
+                "Grocery\n# a comment line\n\nDining\n", encoding="utf-8"
+            )
+
+            out_path = tmp_path / "merchant-map.csv"
+
+            with mock.patch("bootstrap.build_map", wraps=build_map) as spy:
+                bootstrap.main([
+                    str(history_path),
+                    "--out", str(out_path),
+                    "--categories", str(categories_path),
+                ])
+
+            _, kwargs = spy.call_args
+            self.assertEqual(kwargs["known_categories"], {"Grocery", "Dining"})
+
+    def test_without_the_flag_known_categories_stays_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+
+            history_path = tmp_path / "history.csv"
+            write_ledger(history_path, rows_for("SAFEWAY", "Grocery", 3))
+
+            out_path = tmp_path / "merchant-map.csv"
+
+            with mock.patch("bootstrap.build_map", wraps=build_map) as spy:
+                bootstrap.main([str(history_path), "--out", str(out_path)])
+
+            _, kwargs = spy.call_args
+            self.assertIsNone(kwargs["known_categories"])
 
 
 if __name__ == "__main__":

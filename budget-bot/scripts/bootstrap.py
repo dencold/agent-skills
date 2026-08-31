@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from ledger import read_ledger
-from merchant_map import MapEntry, load_map, save_map
+from merchant_map import MapEntry, save_map
 from normalize import normalize_merchant
 
 # A runner-up category must clear BOTH bars to count as a genuine split
@@ -70,15 +70,20 @@ def build_map(rows, known_categories=None):
         chosen = majority
         recent = [r.category for r in group
                   if cutoff and date.fromisoformat(r.timestamp) >= cutoff]
-        if (len(recent) >= RECENCY_MIN_OCCURRENCES
-                and len(set(recent)) == 1
-                and recent[0] != majority):
+        overridden = (len(recent) >= RECENCY_MIN_OCCURRENCES
+                      and len(set(recent)) == 1
+                      and recent[0] != majority)
+        if overridden:
             chosen = recent[0]
             report.recency_overrides.append(merchant)
 
-        alternates = {c: n for c, n in counts.items() if c != chosen}
+        # A recency override means every recent occurrence agreed on the new
+        # category -- by construction there is no live split to flag. The
+        # superseded majority belongs in history, not in alternates.
+        alternates = {}
         ambiguous = False
-        if rest:
+        if not overridden and rest:
+            alternates = {c: n for c, n in counts.items() if c != chosen}
             runner_up_count = max(alternates.values(), default=0)
             share = runner_up_count / total if total else 0
             if (share >= AMBIGUITY_MINORITY_SHARE
@@ -99,6 +104,22 @@ def build_map(rows, known_categories=None):
     return entries, report
 
 
+def read_categories(path):
+    """Parse a plain-text known-categories file: one name per line.
+
+    Blank lines and lines starting with '#' are ignored, so the file the
+    user hands us can carry comments without becoming a phantom category.
+    """
+    categories = set()
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            categories.add(line)
+    return categories
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Build merchant-map.csv from history")
     parser.add_argument("history", nargs="+", type=pathlib.Path,
@@ -107,10 +128,16 @@ def main(argv=None):
                         default=pathlib.Path.home() / ".claude/budget-bot/merchant-map.csv")
     parser.add_argument("--force", action="store_true",
                         help="overwrite an existing map instead of writing alongside it")
+    parser.add_argument("--categories", type=pathlib.Path,
+                        help="plain-text file of known categories, one per line, "
+                             "so rows with a typo'd or retired category are reported "
+                             "instead of silently indexed")
     args = parser.parse_args(argv)
 
+    known_categories = read_categories(args.categories) if args.categories else None
+
     rows = [row for path in args.history for row in read_ledger(path)]
-    entries, report = build_map(rows)
+    entries, report = build_map(rows, known_categories=known_categories)
 
     destination = args.out
     if destination.exists() and not args.force:
