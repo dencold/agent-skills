@@ -35,6 +35,18 @@ class TestNormalizeMerchant(unittest.TestCase):
             normalize_merchant("SAFECO INSURANCE"),
         )
 
+    def test_strips_py_prefix(self):
+        self.assertEqual(normalize_merchant("PY *STARBUCKS 0123"), "STARBUCKS")
+
+    def test_strips_sp_prefix(self):
+        self.assertEqual(normalize_merchant("SP WHOLE FOODS 456"), "WHOLE FOODS")
+
+    def test_strips_paypal_prefix(self):
+        self.assertEqual(normalize_merchant("PAYPAL *EBAY 789XYZ"), "EBAY")
+
+    def test_strips_in_prefix(self):
+        self.assertEqual(normalize_merchant("IN *CONSULTING 0987"), "CONSULTING")
+
     def test_empty_descriptor_raises(self):
         with self.assertRaises(ValueError):
             normalize_merchant("")
