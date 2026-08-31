@@ -14,6 +14,7 @@ duplicate shows up in a category total, a missing row does not.
 
 import csv
 import hashlib
+import json
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
@@ -46,9 +47,14 @@ class DedupeResult:
 
 
 def row_hash(row):
-    """Stable identity for a transaction across re-downloads."""
+    """Stable identity for a transaction across re-downloads.
+
+    json.dumps escapes each field, so a merchant descriptor that happens to
+    contain a delimiter character can't shift field boundaries and collide
+    with a differently-composed row -- unlike a bare "|".join.
+    """
     merchant = normalize_merchant(row.transaction)
-    payload = f"{row.account}|{row.timestamp}|{row.amount:.2f}|{merchant}"
+    payload = json.dumps([row.account, row.timestamp, f"{row.amount:.2f}", merchant])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -106,7 +112,7 @@ def load_emitted(path):
 
 def append_emitted(path, rows):
     """Record rows as exported. Called only after the output CSV is written."""
-    exists = path.exists()
+    exists = path.exists() and path.stat().st_size > 0
     with open(path, "a", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         if not exists:

@@ -68,6 +68,16 @@ class TestPartition(unittest.TestCase):
         result = partition([make_row(timestamp="2026-08-20")], [already])
         self.assertEqual(result.near_matches, [])
 
+    def test_four_days_apart_is_a_near_match(self):
+        already = emitted_for(make_row(timestamp="2026-08-01"))
+        result = partition([make_row(timestamp="2026-08-05")], [already])
+        self.assertEqual(len(result.near_matches), 1)
+
+    def test_five_days_apart_is_not_a_near_match(self):
+        already = emitted_for(make_row(timestamp="2026-08-01"))
+        result = partition([make_row(timestamp="2026-08-06")], [already])
+        self.assertEqual(result.near_matches, [])
+
 
 class TestEmittedFile(unittest.TestCase):
     def test_append_then_load_round_trips(self):
@@ -81,6 +91,17 @@ class TestEmittedFile(unittest.TestCase):
 
     def test_missing_file_loads_as_empty(self):
         self.assertEqual(load_emitted(pathlib.Path("/nonexistent/emitted.csv")), [])
+
+    def test_append_to_empty_file_writes_header_not_just_data(self):
+        # A file can exist but be empty (e.g. touched by a prior failed run).
+        # Treating "exists" as "has a header" silently loses the row: the
+        # data line gets consumed by DictReader as the header on load.
+        tmp = pathlib.Path(tempfile.mkdtemp()) / "emitted.csv"
+        tmp.touch()
+        append_emitted(tmp, [make_row()])
+        back = load_emitted(tmp)
+        self.assertEqual(len(back), 1)
+        self.assertEqual(back[0].merchant, "BLUE BOTTLE")
 
 
 if __name__ == "__main__":
