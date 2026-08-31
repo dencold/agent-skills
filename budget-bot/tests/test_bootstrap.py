@@ -119,5 +119,38 @@ class TestMainCategoriesFlag(unittest.TestCase):
             self.assertIsNone(kwargs["known_categories"])
 
 
+from bootstrap import holdout_coverage
+
+
+class TestHoldout(unittest.TestCase):
+    def test_merchant_seen_in_training_is_counted_correct(self):
+        rows = rows_for("SAFEWAY", "Grocery", 10, year="2026", month="06") + \
+               rows_for("SAFEWAY", "Grocery", 3, year="2026", month="07")
+        result = holdout_coverage(rows, "2026-07")
+        self.assertEqual(result["test_rows"], 3)
+        self.assertEqual(result["correct"], 3)
+        self.assertEqual(result["coverage"], 1.0)
+
+    def test_merchant_absent_from_training_is_not_counted_correct(self):
+        rows = rows_for("SAFEWAY", "Grocery", 10, year="2026", month="06") + \
+               rows_for("BRAND NEW CAFE", "Dining", 2, year="2026", month="07")
+        result = holdout_coverage(rows, "2026-07")
+        self.assertEqual(result["correct"], 0)
+        self.assertEqual(result["coverage"], 0.0)
+
+    def test_wrong_prediction_is_reported_as_a_miss(self):
+        rows = rows_for("SPROUTS", "Grocery", 10, year="2026", month="06") + \
+               rows_for("SPROUTS", "Dining", 2, year="2026", month="07")
+        result = holdout_coverage(rows, "2026-07")
+        self.assertEqual(result["correct"], 0)
+        self.assertEqual(result["misses"][0][0], "SPROUTS")
+
+    def test_empty_holdout_month_does_not_divide_by_zero(self):
+        rows = rows_for("SAFEWAY", "Grocery", 10, year="2026", month="06")
+        result = holdout_coverage(rows, "2026-07")
+        self.assertEqual(result["test_rows"], 0)
+        self.assertEqual(result["coverage"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

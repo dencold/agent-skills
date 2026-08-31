@@ -12,6 +12,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from categorize import TIER_EXACT, categorize
 from ledger import read_ledger
 from merchant_map import MapEntry, save_map
 from normalize import normalize_merchant
@@ -104,6 +105,42 @@ def build_map(rows, known_categories=None):
     return entries, report
 
 
+def holdout_coverage(rows, month):
+    """Measure the map against a month it was not built from.
+
+    Only silent assignments count as coverage. A row the pipeline would
+    have put in front of the user is not automation, even when the
+    proposal turns out right.
+    """
+    train = [r for r in rows if not r.timestamp.startswith(month)]
+    test = [r for r in rows if r.timestamp.startswith(month)]
+
+    entries, _ = build_map(train)
+    correct = 0
+    auto_assigned = 0
+    misses = []
+
+    for decision in categorize(test, entries):
+        expected = decision.row.category
+        if decision.tier == TIER_EXACT and not decision.needs_review:
+            auto_assigned += 1
+            if decision.proposed == expected:
+                correct += 1
+            else:
+                misses.append((decision.merchant, expected, decision.proposed))
+        else:
+            misses.append((decision.merchant, expected, decision.proposed or "(no match)"))
+
+    return {
+        "train_rows": len(train),
+        "test_rows": len(test),
+        "auto_assigned": auto_assigned,
+        "correct": correct,
+        "coverage": correct / len(test) if test else 0.0,
+        "misses": misses,
+    }
+
+
 def read_categories(path):
     """Parse a plain-text known-categories file: one name per line.
 
@@ -132,11 +169,25 @@ def main(argv=None):
                         help="plain-text file of known categories, one per line, "
                              "so rows with a typo'd or retired category are reported "
                              "instead of silently indexed")
+    parser.add_argument("--holdout", metavar="YYYY-MM",
+                        help="validate against this month instead of writing a map")
     args = parser.parse_args(argv)
 
     known_categories = read_categories(args.categories) if args.categories else None
 
     rows = [row for path in args.history for row in read_ledger(path)]
+
+    if args.holdout:
+        result = holdout_coverage(rows, args.holdout)
+        print(f"Holdout {args.holdout}: {result['test_rows']} rows, "
+              f"{result['train_rows']} used for training")
+        print(f"  auto-categorized correctly: {result['correct']} "
+              f"({result['coverage']:.0%})")
+        print(f"  needed review: {result['test_rows'] - result['auto_assigned']}")
+        for merchant, expected, got in result["misses"][:20]:
+            print(f"    {merchant}: expected {expected}, got {got}")
+        return 0
+
     entries, report = build_map(rows, known_categories=known_categories)
 
     destination = args.out
