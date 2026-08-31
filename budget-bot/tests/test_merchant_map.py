@@ -37,6 +37,42 @@ class TestMapRoundTrip(unittest.TestCase):
     def test_missing_file_loads_as_empty(self):
         self.assertEqual(load_map(self.tmp.parent / "nope.csv"), {})
 
+    def test_category_with_semicolon_round_trips(self):
+        save_map(self.tmp, {
+            "STORE": MapEntry("STORE", "Grocery", 10, True, 0, {"Fees; Interest": 3}),
+        })
+        back = load_map(self.tmp)
+        self.assertEqual(back["STORE"].alternates, {"Fees; Interest": 3})
+
+    def test_category_with_colon_round_trips(self):
+        save_map(self.tmp, {
+            "RESTAURANT": MapEntry("RESTAURANT", "Dining", 10, True, 0, {"Tips: Restaurant": 5}),
+        })
+        back = load_map(self.tmp)
+        self.assertEqual(back["RESTAURANT"].alternates, {"Tips: Restaurant": 5})
+
+    def test_category_with_comma_round_trips(self):
+        save_map(self.tmp, {
+            "STORE": MapEntry("STORE", "Groceries", 10, True, 0, {"Gas, Oil": 2}),
+        })
+        back = load_map(self.tmp)
+        self.assertEqual(back["STORE"].alternates, {"Gas, Oil": 2})
+
+    def test_malformed_count_raises_with_context(self):
+        save_map(self.tmp, {
+            "STORE": MapEntry("STORE", "Grocery", 10, False, 0, {}),
+        })
+        # Manually edit the file to introduce malformed data
+        content = self.tmp.read_text()
+        content = content.replace("STORE,Grocery,10,false,0,",
+                                  "STORE,Grocery,10,false,0,Household:many")
+        self.tmp.write_text(content)
+        # load_map should raise ValueError with merchant context
+        with self.assertRaises(ValueError) as cm:
+            load_map(self.tmp)
+        self.assertIn("STORE", str(cm.exception))
+        self.assertIn("Household", str(cm.exception))
+
 
 class TestRecordDecision(unittest.TestCase):
     def test_new_merchant_is_added_unflagged(self):
