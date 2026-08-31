@@ -1,0 +1,17 @@
+[[account]]
+name          = "Test Visa"
+signature     = ["Transaction Date", "Post Date", "Description", "Amount"]
+date_column   = "Transaction Date"
+date_format   = "%m/%d/%Y"
+description   = "Description"
+amount_column = "Amount"
+amount_sign   = "negative_is_charge"
+
+[[account]]
+name          = "Test Checking"
+signature     = ["Date", "Merchant", "Debit", "Memo"]
+date_column   = "Date"
+date_format   = "%Y-%m-%d"
+description   = "Merchant"
+amount_column = "Debit"
+amount_sign   = "positive_is_charge"
