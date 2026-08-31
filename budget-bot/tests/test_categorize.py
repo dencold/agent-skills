@@ -19,7 +19,7 @@ def make_row(transaction, amount="6.50"):
 
 ENTRIES = {
     "BLUE BOTTLE": MapEntry("BLUE BOTTLE", "Dining", 14, False),
-    "COSTCO": MapEntry("COSTCO", "Grocery", 31, True, 0, {"Household": 13}),
+    "COSTCO WHSE": MapEntry("COSTCO WHSE", "Grocery", 31, True, 0, {"Household": 13}),
     "WHOLE FOODS MARKET": MapEntry("WHOLE FOODS MARKET", "Grocery", 9, False),
 }
 
@@ -32,7 +32,7 @@ class TestCategorize(unittest.TestCase):
         self.assertFalse(decision.needs_review)
 
     def test_ambiguous_merchant_always_surfaces_with_the_split(self):
-        decision = categorize([make_row("COSTCO 0455")], dict(ENTRIES))[0]
+        decision = categorize([make_row("COSTCO WHSE 0455")], dict(ENTRIES))[0]
         self.assertEqual(decision.tier, TIER_EXACT)
         self.assertTrue(decision.needs_review)
         self.assertEqual(decision.proposed, "Grocery")
