@@ -1,0 +1,285 @@
+"""Build the merchant map from a year of the user's own categorizations.
+
+This is what makes the first live run useful instead of a cold start: the
+decisions are already made, sitting in the exported sheet, and only need
+to be indexed. Everything here reads; the only write is merchant-map.csv.
+"""
+
+import argparse
+import pathlib
+import re
+import sys
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+
+from categorize import TIER_EXACT, categorize
+from ledger import LedgerError, read_ledger
+from merchant_map import MapEntry, save_map
+from normalize import normalize_merchant
+
+# A runner-up category must clear BOTH bars to count as a genuine split
+# rather than a stale mis-tag. This is the knob controlling how big the
+# monthly review table is; tune after a real run.
+AMBIGUITY_MINORITY_SHARE = 0.20
+AMBIGUITY_MINORITY_COUNT = 3
+
+# A merchant categorized consistently in recent history was deliberately
+# re-categorized; the all-time majority is a decision already overturned.
+RECENCY_WINDOW_DAYS = 183
+RECENCY_MIN_OCCURRENCES = 2
+
+
+@dataclass
+class BootstrapReport:
+    rows_used: int = 0
+    merchants: int = 0
+    flagged: list = field(default_factory=list)
+    borderline: list = field(default_factory=list)
+    recency_overrides: list = field(default_factory=list)
+    unknown_categories: dict = field(default_factory=dict)
+    blank_category_rows: int = 0
+
+
+def build_map(rows, known_categories=None):
+    """Index categorized history into a merchant map plus a data-quality report."""
+    report = BootstrapReport()
+    by_merchant = defaultdict(list)
+    unknown = Counter()
+
+    for row in rows:
+        if not row.category:
+            report.blank_category_rows += 1
+            continue
+        if known_categories is not None and row.category not in known_categories:
+            unknown[row.category] += 1
+            continue
+        by_merchant[normalize_merchant(row.transaction)].append(row)
+
+    report.unknown_categories = dict(unknown)
+
+    latest = max((r.timestamp for group in by_merchant.values() for r in group),
+                 default=None)
+    cutoff = (date.fromisoformat(latest) - timedelta(days=RECENCY_WINDOW_DAYS)
+              if latest else None)
+
+    entries = {}
+    for merchant, group in by_merchant.items():
+        counts = Counter(r.category for r in group)
+        total = sum(counts.values())
+        (majority, _), *rest = counts.most_common()
+
+        chosen = majority
+        recent = [r.category for r in group
+                  if cutoff and date.fromisoformat(r.timestamp) >= cutoff]
+        overridden = (len(recent) >= RECENCY_MIN_OCCURRENCES
+                      and len(set(recent)) == 1
+                      and recent[0] != majority)
+        if overridden:
+            chosen = recent[0]
+            report.recency_overrides.append(merchant)
+
+        # A recency override means every recent occurrence agreed on the new
+        # category -- by construction there is no live split to flag. The
+        # superseded majority belongs in history, not in alternates.
+        alternates = {}
+        ambiguous = False
+        if not overridden and rest:
+            alternates = {c: n for c, n in counts.items() if c != chosen}
+            runner_up_count = max(alternates.values(), default=0)
+            share = runner_up_count / total if total else 0
+            if (share >= AMBIGUITY_MINORITY_SHARE
+                    and runner_up_count >= AMBIGUITY_MINORITY_COUNT):
+                ambiguous = True
+                report.flagged.append(merchant)
+            elif runner_up_count >= 2:
+                report.borderline.append(merchant)
+
+        entries[merchant] = MapEntry(
+            merchant=merchant, category=chosen, seen=total,
+            ambiguous=ambiguous, streak=0,
+            alternates=alternates if ambiguous else {},
+        )
+
+    report.rows_used = sum(len(g) for g in by_merchant.values())
+    report.merchants = len(entries)
+    return entries, report
+
+
+def holdout_coverage(rows, month):
+    """Measure the map against a month it was not built from.
+
+    Only silent assignments count as coverage. A row the pipeline would
+    have put in front of the user is not automation, even when the
+    proposal turns out right.
+    """
+    # Strictly before the holdout month -- rows from later months must not
+    # leak into training, or a merchant unknown at the time would falsely
+    # look known when scoring a mid-file month.
+    train = [r for r in rows if r.timestamp[:7] < month]
+    test = [r for r in rows if r.timestamp.startswith(month)]
+
+    entries, _ = build_map(train)
+    correct = 0
+    auto_assigned = 0
+    misses = []
+
+    for decision in categorize(test, entries):
+        expected = decision.row.category
+        if decision.tier == TIER_EXACT and not decision.needs_review:
+            auto_assigned += 1
+            if decision.proposed == expected:
+                correct += 1
+            else:
+                misses.append((decision.merchant, expected, decision.proposed, "wrong"))
+        else:
+            misses.append((decision.merchant, expected,
+                            decision.proposed or "(no match)", "review"))
+
+    return {
+        "train_rows": len(train),
+        "test_rows": len(test),
+        "auto_assigned": auto_assigned,
+        "correct": correct,
+        "coverage": correct / len(test) if test else 0.0,
+        "misses": misses,
+    }
+
+
+# references/categories.md's bullet form: `- **Name** — description`. The
+# name is whatever sits between the first '**' pair; everything after is
+# free-text description and is never parsed, so a description containing
+# its own dashes or punctuation can't be mistaken for structure.
+_CATEGORY_BULLET = re.compile(r"^\s*-\s*\*\*(.+?)\*\*")
+
+# categories.md wraps every instructional line in an HTML comment precisely
+# so it reads as inert markup rather than content. Its presence marks a file
+# as the categories.md template even before a single bullet has been added --
+# which matters because the still-empty skeleton has no bullets yet, and
+# without this check it would fall through to the plain-list rule below and
+# read its own instructions as phantom categories.
+_HTML_COMMENT = re.compile(r"<!--")
+
+
+def read_categories(path):
+    """Parse the known-categories list from categories.md or a plain list.
+
+    references/categories.md is markdown: bullet lines for each category,
+    plus headings, HTML comments, and a boundary-rules section written as
+    prose. Reading it as one name per line would import that prose as
+    phantom categories, so when the file contains any bullet lines, only
+    those lines count -- everything else (headings, comments, boundary-rule
+    paragraphs) is ignored.
+
+    A file with no bullets but an HTML comment is the categories.md skeleton
+    before its first entry: nothing has been filled in yet, so this returns
+    an empty set rather than reading the template's own instructions as
+    categories.
+
+    Anything else -- no bullets, no HTML comment -- falls back to the
+    original plain-list contract: one category name per line, blanks and
+    '#' comments ignored. This keeps a hand-written list working exactly as
+    before.
+    """
+    lines = pathlib.Path(path).read_text(encoding="utf-8").splitlines()
+
+    bulleted = [m.group(1).strip() for line in lines
+                if (m := _CATEGORY_BULLET.match(line))]
+    if bulleted:
+        return set(bulleted)
+
+    if any(_HTML_COMMENT.search(line) for line in lines):
+        return set()
+
+    categories = set()
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        categories.add(line)
+    return categories
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Build merchant-map.csv from history")
+    parser.add_argument("history", nargs="+", type=pathlib.Path,
+                        help="one or more sheet exports in the ledger schema")
+    parser.add_argument("--out", type=pathlib.Path,
+                        default=pathlib.Path.home() / ".claude/budget-bot/merchant-map.csv")
+    parser.add_argument("--force", action="store_true",
+                        help="overwrite an existing map instead of writing alongside it")
+    parser.add_argument("--categories", type=pathlib.Path,
+                        help="known-categories file -- either references/categories.md "
+                             "(its bullet lines are read directly) or a plain-text list, "
+                             "one category per line -- so rows with a typo'd or retired "
+                             "category are reported instead of silently indexed")
+    parser.add_argument("--holdout", metavar="YYYY-MM",
+                        help="validate against this month instead of writing a map")
+    args = parser.parse_args(argv)
+
+    known_categories = read_categories(args.categories) if args.categories else None
+
+    if args.holdout and args.categories:
+        print(f"NOTE: --categories {args.categories} is ignored under "
+              f"--holdout; the holdout scores the map, it does not build one.")
+
+    try:
+        rows = [row for path in args.history for row in read_ledger(path)]
+    except (LedgerError, OSError) as exc:
+        print(f"\nSTOPPED: {exc}", file=sys.stderr)
+        return 1
+
+    if args.holdout:
+        result = holdout_coverage(rows, args.holdout)
+        print(f"Holdout {args.holdout}: {result['test_rows']} rows, "
+              f"{result['train_rows']} used for training")
+        print(f"  auto-categorized correctly: {result['correct']} "
+              f"({result['coverage']:.0%})")
+        print(f"  needed review: {result['test_rows'] - result['auto_assigned']}")
+        for merchant, expected, got, reason in result["misses"][:20]:
+            if reason == "wrong":
+                print(f"    {merchant}: expected {expected}, got {got}")
+            else:
+                print(f"    {merchant}: flagged for review "
+                      f"(would propose {got}, actual {expected})")
+        return 0
+
+    if known_categories == set():
+        # An empty-but-not-None set would reject every row's category as
+        # unrecognized -- the categories.md skeleton before its first entry
+        # is the case this guards against. Falling back to no validation is
+        # the safe default; a category file that is empty on purpose is not
+        # a scenario this tool needs to support.
+        print(f"{args.categories}: no categories found yet -- "
+              f"proceeding without category validation")
+        known_categories = None
+
+    entries, report = build_map(rows, known_categories=known_categories)
+
+    destination = args.out
+    if destination.exists() and not args.force:
+        # The existing map holds corrections history does not contain.
+        destination = destination.with_suffix(".new.csv")
+        print(f"{args.out} exists; writing {destination} instead.")
+        print(f"Compare with: diff {args.out} {destination}")
+        print("Re-run with --force to replace it.")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    save_map(destination, entries)
+
+    print(f"\n{report.merchants} merchants from {report.rows_used} categorized rows")
+    print(f"  flagged ambiguous: {len(report.flagged)}"
+          + (f" -- {', '.join(sorted(report.flagged))}" if report.flagged else ""))
+    if report.borderline:
+        print(f"  borderline, confirm these: {', '.join(sorted(report.borderline))}")
+    if report.recency_overrides:
+        print(f"  recency overrides: {', '.join(sorted(report.recency_overrides))}")
+    if report.blank_category_rows:
+        print(f"  skipped {report.blank_category_rows} rows with no category")
+    for category, count in sorted(report.unknown_categories.items()):
+        print(f"  unrecognized category {category!r}: {count} rows")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

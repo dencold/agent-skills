@@ -1,0 +1,19 @@
+# Copy to ~/.claude/budget-bot/accounts.toml and fill in one block per account.
+#
+# signature     the export's header row. Routing is by header, not filename,
+#               so files can keep whatever name the bank gave them.
+# filename_hint only needed when two accounts export identical headers (two
+#               cards at the same bank). A substring of the downloaded name.
+# amount_sign   "negative_is_charge" if the export shows a purchase as -42.10,
+#               "positive_is_charge" if it shows 42.10. Output is always
+#               charges-positive; this is where that is reconciled.
+
+[[account]]
+name          = "Example Card"
+signature     = ["Transaction Date", "Post Date", "Description", "Amount"]
+date_column   = "Transaction Date"
+date_format   = "%m/%d/%Y"
+description   = "Description"
+amount_column = "Amount"
+amount_sign   = "negative_is_charge"
+filename_hint = ""
