@@ -116,7 +116,7 @@ where that month's raw bank exports land before a run.
 ## Verify
 
 ```bash
-python3 -m unittest discover -s tests   # 134 tests
+python3 -m unittest discover -s tests   # 137 tests
 ```
 
 The suite covers parsing, normalization, dedupe, categorization, and the
