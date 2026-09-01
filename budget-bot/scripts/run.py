@@ -27,6 +27,10 @@ from parse import ParseError, load_accounts, parse_folder
 DOUBLING_FACTOR = 2.0
 
 
+class OverrideError(ValueError):
+    """A malformed --set argument on the command line."""
+
+
 def _prior_month(today=None):
     first = (today or date.today()).replace(day=1)
     return (first - timedelta(days=1)).strftime("%Y-%m")
@@ -148,6 +152,18 @@ def commit(work, state, out, overrides):
     state = pathlib.Path(state)
     payload = json.loads(pathlib.Path(work).read_text())
 
+    # A stale or mistyped --set row number must never be silently discarded
+    # in favor of the proposed category: that is a deliberate correction
+    # the user made, reversed without any complaint.
+    known_numbers = {record["n"] for record in payload["rows"]}
+    unknown_overrides = sorted(n for n in overrides if n not in known_numbers)
+    if unknown_overrides:
+        print("Refusing to write: these --set row numbers do not exist "
+              "in the work file.", file=sys.stderr)
+        for n in unknown_overrides:
+            print(f"  {n}", file=sys.stderr)
+        raise SystemExit(1)
+
     rows = []
     uncategorized = []
     for record in payload["rows"]:
@@ -195,10 +211,19 @@ def commit(work, state, out, overrides):
 
 
 def _parse_overrides(pairs):
+    """Turn --set N=Category strings into {int: str}, or refuse cleanly."""
     overrides = {}
     for pair in pairs or []:
-        number, _, category = pair.partition("=")
-        overrides[int(number)] = category
+        number, sep, category = pair.partition("=")
+        if not sep:
+            raise OverrideError(
+                f"--set {pair!r} is missing '='; expected N=Category")
+        try:
+            n = int(number)
+        except ValueError:
+            raise OverrideError(
+                f"--set {pair!r}: {number!r} is not a row number") from None
+        overrides[n] = category
     return overrides
 
 
@@ -229,8 +254,9 @@ def main(argv=None):
     try:
         if args.command == "review":
             return review(args.drop, args.state, args.work, args.since)
-        return commit(args.work, args.state, args.out, _parse_overrides(args.set))
-    except ParseError as exc:
+        overrides = _parse_overrides(args.set)
+        return commit(args.work, args.state, args.out, overrides)
+    except (ParseError, OverrideError) as exc:
         print(f"\nSTOPPED: {exc}", file=sys.stderr)
         return 1
 

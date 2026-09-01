@@ -1,3 +1,5 @@
+import contextlib
+import io
 import sys
 import pathlib
 import tempfile
@@ -12,6 +14,13 @@ from bootstrap import (
     AMBIGUITY_MINORITY_COUNT, build_map,
 )
 from ledger import Row, write_ledger
+
+
+def _quiet(func, *args, **kwargs):
+    """Run an entry point without its progress report reaching the test runner."""
+    with contextlib.redirect_stdout(io.StringIO()), \
+         contextlib.redirect_stderr(io.StringIO()):
+        return func(*args, **kwargs)
 
 
 def rows_for(merchant, category, count, month="01", year="2025"):
@@ -94,7 +103,7 @@ class TestMainCategoriesFlag(unittest.TestCase):
             out_path = tmp_path / "merchant-map.csv"
 
             with mock.patch("bootstrap.build_map", wraps=build_map) as spy:
-                bootstrap.main([
+                _quiet(bootstrap.main, [
                     str(history_path),
                     "--out", str(out_path),
                     "--categories", str(categories_path),
@@ -113,7 +122,7 @@ class TestMainCategoriesFlag(unittest.TestCase):
             out_path = tmp_path / "merchant-map.csv"
 
             with mock.patch("bootstrap.build_map", wraps=build_map) as spy:
-                bootstrap.main([str(history_path), "--out", str(out_path)])
+                _quiet(bootstrap.main, [str(history_path), "--out", str(out_path)])
 
             _, kwargs = spy.call_args
             self.assertIsNone(kwargs["known_categories"])
