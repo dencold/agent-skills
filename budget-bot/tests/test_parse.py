@@ -1,13 +1,14 @@
 import sys
 import pathlib
+import tempfile
 import unittest
 from decimal import Decimal
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 
 from parse import (
-    Account, AmbiguousAccountError, MalformedRowError, UnknownFileError,
-    load_accounts, match_account, parse_file, parse_folder, _to_decimal,
+    Account, AmbiguousAccountError, DuplicateExportError, MalformedRowError,
+    UnknownFileError, load_accounts, match_account, parse_file, parse_folder,
 )
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
@@ -83,52 +84,34 @@ class TestParseFile(unittest.TestCase):
         rows = parse_file(FIXTURES / "negative_is_charge.csv", self.accounts[0])
         self.assertTrue(all(r.account == "Test Visa" for r in rows))
 
+    def _scratch(self, name, text):
+        """A CSV in a tempdir -- never in tests/, which parse_folder walks."""
+        path = pathlib.Path(tempfile.mkdtemp()) / name
+        path.write_text(text)
+        return path
+
     def test_malformed_date_halts_with_the_line_number(self):
-        bad = FIXTURES.parent / "bad.csv"
-        bad.write_text("Transaction Date,Post Date,Description,Amount\n"
-                       "not-a-date,08/05/2026,COFFEE,-6.50\n")
-        try:
-            with self.assertRaises(MalformedRowError) as ctx:
-                parse_file(bad, self.accounts[0])
-            self.assertEqual(ctx.exception.line_number, 2)
-        finally:
-            bad.unlink()
+        bad = self._scratch("bad.csv",
+                            "Transaction Date,Post Date,Description,Amount\n"
+                            "not-a-date,08/05/2026,COFFEE,-6.50\n")
+        with self.assertRaises(MalformedRowError) as ctx:
+            parse_file(bad, self.accounts[0])
+        self.assertEqual(ctx.exception.line_number, 2)
 
     def test_blank_amount_halts_with_the_line_number(self):
-        bad = FIXTURES.parent / "bad_amount.csv"
-        bad.write_text("Transaction Date,Post Date,Description,Amount\n"
-                       "08/04/2026,08/05/2026,COFFEE,\n")
-        try:
-            with self.assertRaises(MalformedRowError) as ctx:
-                parse_file(bad, self.accounts[0])
-            self.assertEqual(ctx.exception.line_number, 2)
-        finally:
-            bad.unlink()
+        bad = self._scratch("bad_amount.csv",
+                            "Transaction Date,Post Date,Description,Amount\n"
+                            "08/04/2026,08/05/2026,COFFEE,\n")
+        with self.assertRaises(MalformedRowError) as ctx:
+            parse_file(bad, self.accounts[0])
+        self.assertEqual(ctx.exception.line_number, 2)
 
     def test_parenthesized_negative_flips_through_negative_is_charge(self):
-        paren = FIXTURES.parent / "paren_amount.csv"
-        paren.write_text("Transaction Date,Post Date,Description,Amount\n"
-                          "08/04/2026,08/05/2026,COFFEE,(6.50)\n")
-        try:
-            rows = parse_file(paren, self.accounts[0])
-            self.assertEqual(rows[0].amount, Decimal("6.50"))
-        finally:
-            paren.unlink()
-
-
-class TestToDecimal(unittest.TestCase):
-    def test_strips_dollar_sign(self):
-        self.assertEqual(_to_decimal("$14.25"), Decimal("14.25"))
-
-    def test_strips_thousands_comma(self):
-        self.assertEqual(_to_decimal("1,234.56"), Decimal("1234.56"))
-
-    def test_parses_parenthesized_negative(self):
-        self.assertEqual(_to_decimal("(6.50)"), Decimal("-6.50"))
-
-    def test_empty_string_raises(self):
-        with self.assertRaises(ValueError):
-            _to_decimal("")
+        paren = self._scratch("paren_amount.csv",
+                              "Transaction Date,Post Date,Description,Amount\n"
+                              "08/04/2026,08/05/2026,COFFEE,(6.50)\n")
+        rows = parse_file(paren, self.accounts[0])
+        self.assertEqual(rows[0].amount, Decimal("6.50"))
 
 
 class TestParseFolder(unittest.TestCase):
@@ -139,6 +122,21 @@ class TestParseFolder(unittest.TestCase):
         rows, missing = parse_folder(FIXTURES, accounts + [ghost])
         self.assertIn("Missing Card", missing)
         self.assertEqual(len(rows), 5)
+
+    def test_two_files_matching_one_account_halt_the_run(self):
+        # The mirror image of a missing account: a double download would
+        # otherwise count every row twice, silently.
+        accounts = load_accounts(FIXTURES / "accounts.toml")
+        drop = pathlib.Path(tempfile.mkdtemp())
+        body = (FIXTURES / "negative_is_charge.csv").read_text()
+        (drop / "activity.csv").write_text(body)
+        (drop / "activity (1).csv").write_text(body)
+
+        with self.assertRaises(DuplicateExportError) as ctx:
+            parse_folder(drop, accounts)
+        self.assertEqual(sorted(ctx.exception.duplicates["Test Visa"]),
+                         ["activity (1).csv", "activity.csv"])
+        self.assertIn("Test Visa", str(ctx.exception))
 
 
 if __name__ == "__main__":

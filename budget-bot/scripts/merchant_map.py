@@ -14,8 +14,16 @@ from dataclasses import dataclass, field
 
 MAP_COLUMNS = ["merchant", "category", "seen", "ambiguous", "streak", "alternates"]
 
-# Consecutive agreements before the ambiguity flag is offered for removal.
+# Consecutive runs accepting the same category before the ambiguity flag is
+# offered for removal. Runs, not transactions: the safeguard's point is five
+# separate human confirmations, and one month can hold five Costco trips.
 CLEAR_FLAG_STREAK = 5
+
+# The `ambiguous` column is documented as hand-editable, so it accepts what
+# a person actually types. Anything outside these sets raises rather than
+# silently reading as false and auto-assigning the merchant forever.
+TRUE_WORDS = frozenset({"true", "yes", "y", "1"})
+FALSE_WORDS = frozenset({"false", "no", "n", "0"})
 
 
 @dataclass
@@ -37,6 +45,33 @@ class MapEntry:
             return self.category
         runner_up, count = max(self.alternates.items(), key=lambda kv: kv[1])
         return f"{self.category} (usually; {count} of {self.seen} were {runner_up})"
+
+
+def _parse_flag(raw, merchant):
+    """Read the hand-editable `ambiguous` cell, or say exactly what is wrong."""
+    text = (raw or "").strip().lower()
+    if not text:
+        return False
+    if text in TRUE_WORDS:
+        return True
+    if text in FALSE_WORDS:
+        return False
+    raise ValueError(
+        f"merchant {merchant!r}: ambiguous column is {raw!r}; expected one of "
+        f"{'/'.join(sorted(TRUE_WORDS))} or {'/'.join(sorted(FALSE_WORDS))}")
+
+
+def _parse_count(raw, merchant, column):
+    """Read a numeric cell with the merchant attached to any complaint."""
+    text = (raw or "").strip()
+    if not text:
+        return 0
+    try:
+        return int(text)
+    except ValueError:
+        raise ValueError(
+            f"merchant {merchant!r}: {column} column is {raw!r}; "
+            f"expected a whole number") from None
 
 
 def _pack(alternates):
@@ -110,9 +145,9 @@ def load_map(path):
             entries[merchant] = MapEntry(
                 merchant=merchant,
                 category=(record["category"] or "").strip(),
-                seen=int(record.get("seen") or 0),
-                ambiguous=(record.get("ambiguous") or "").strip().lower() == "true",
-                streak=int(record.get("streak") or 0),
+                seen=_parse_count(record.get("seen"), merchant, "seen"),
+                ambiguous=_parse_flag(record.get("ambiguous"), merchant),
+                streak=_parse_count(record.get("streak"), merchant, "streak"),
                 alternates=alternates,
             )
     return entries
@@ -132,14 +167,40 @@ def save_map(path, entries):
             ])
 
 
-def record_decision(entries, merchant, category):
+def _promote_majority(entry):
+    """Keep `category` the category that actually holds the majority.
+
+    `describe()` says "usually" and the review table pre-fills `category`,
+    so once an alternate has overtaken the stored answer the line states a
+    falsehood and pre-fills the minority. bootstrap.build_map picks the
+    majority at build time; this is the same rule on the learning path.
+    """
+    if not entry.alternates:
+        return
+    leader, leader_count = max(entry.alternates.items(),
+                               key=lambda kv: (kv[1], kv[0]))
+    current = entry.seen - sum(entry.alternates.values())
+    if leader_count <= current:
+        return
+    del entry.alternates[leader]
+    if current > 0:
+        entry.alternates[entry.category] = current
+    entry.category = leader
+
+
+def record_decision(entries, merchant, category, count_streak=True):
     """Fold one confirmed categorization back into the map.
 
     A disagreement with the stored category is sufficient evidence that a
     merchant genuinely splits -- Target is Household most trips and Gifts
-    some -- so it sets the flag on first occurrence. The majority category
-    stays the default; the alternate is counted so the review line can show
-    the split.
+    some -- so it sets the flag on first occurrence. The alternate is
+    counted so the review line can show the split, and takes over as the
+    default once it outnumbers the stored category.
+
+    `count_streak` is False for the second and later transactions of the
+    same merchant within one run: the streak measures consecutive runs the
+    user accepted a category, so one commit may advance it at most once.
+    A disagreement still resets it, however many rows in.
     """
     entry = entries.get(merchant)
     if entry is None:
@@ -149,9 +210,11 @@ def record_decision(entries, merchant, category):
 
     entry.seen += 1
     if category == entry.category:
-        entry.streak += 1
+        if count_streak:
+            entry.streak += 1
     else:
         entry.alternates[category] = entry.alternates.get(category, 0) + 1
         entry.ambiguous = True
         entry.streak = 0
+        _promote_majority(entry)
     return entry

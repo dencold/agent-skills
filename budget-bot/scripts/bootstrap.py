@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from categorize import TIER_EXACT, categorize
-from ledger import read_ledger
+from ledger import LedgerError, read_ledger
 from merchant_map import MapEntry, save_map
 from normalize import normalize_merchant
 
@@ -67,7 +67,7 @@ def build_map(rows, known_categories=None):
     for merchant, group in by_merchant.items():
         counts = Counter(r.category for r in group)
         total = sum(counts.values())
-        (majority, majority_count), *rest = counts.most_common()
+        (majority, _), *rest = counts.most_common()
 
         chosen = majority
         recent = [r.category for r in group
@@ -219,7 +219,15 @@ def main(argv=None):
 
     known_categories = read_categories(args.categories) if args.categories else None
 
-    rows = [row for path in args.history for row in read_ledger(path)]
+    if args.holdout and args.categories:
+        print(f"NOTE: --categories {args.categories} is ignored under "
+              f"--holdout; the holdout scores the map, it does not build one.")
+
+    try:
+        rows = [row for path in args.history for row in read_ledger(path)]
+    except (LedgerError, OSError) as exc:
+        print(f"\nSTOPPED: {exc}", file=sys.stderr)
+        return 1
 
     if args.holdout:
         result = holdout_coverage(rows, args.holdout)
@@ -260,7 +268,8 @@ def main(argv=None):
     save_map(destination, entries)
 
     print(f"\n{report.merchants} merchants from {report.rows_used} categorized rows")
-    print(f"  flagged ambiguous: {len(report.flagged)}")
+    print(f"  flagged ambiguous: {len(report.flagged)}"
+          + (f" -- {', '.join(sorted(report.flagged))}" if report.flagged else ""))
     if report.borderline:
         print(f"  borderline, confirm these: {', '.join(sorted(report.borderline))}")
     if report.recency_overrides:

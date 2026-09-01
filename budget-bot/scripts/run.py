@@ -21,46 +21,70 @@ from decimal import Decimal
 from categorize import categorize
 from dedupe import append_emitted, load_emitted, partition
 from ledger import Row, write_ledger
-from merchant_map import load_map, record_decision, save_map
+from merchant_map import CLEAR_FLAG_STREAK, load_map, record_decision, save_map
 from parse import ParseError, load_accounts, parse_folder
 
 DOUBLING_FACTOR = 2.0
 
 
-class OverrideError(ValueError):
+class UsageError(ValueError):
+    """Bad command-line input, reported before any work or any state write."""
+
+
+class OverrideError(UsageError):
     """A malformed --set argument on the command line."""
 
 
-def _prior_month(today=None):
-    first = (today or date.today()).replace(day=1)
+def _month_before(month_key):
+    first = date.fromisoformat(f"{month_key}-01")
     return (first - timedelta(days=1)).strftime("%Y-%m")
 
 
-def summarize(rows, emitted, missing_accounts, today=None):
-    """Sanity checks run before the user pastes anything into the sheet."""
+def summarize(rows, emitted, missing_accounts):
+    """Sanity checks run before the user pastes anything into the sheet.
+
+    The comparison month is derived from the batch, not from today's date:
+    the run happens in September for August's transactions, so "the month
+    before today" is August -- the batch's own month -- and every category
+    would be compared against itself.
+
+    Magnitudes are compared because income is negative by convention. A raw
+    `total > prior * 2` is backwards for every income category: pay tripling
+    goes unflagged while pay collapsing is reported as a doubling.
+    """
     by_account = defaultdict(lambda: Decimal("0"))
+    counts_by_account = defaultdict(int)
     by_category = defaultdict(lambda: Decimal("0"))
     for row in rows:
         by_account[row.account] += row.amount
+        counts_by_account[row.account] += 1
         by_category[row.category or "(uncategorized)"] += row.amount
 
-    prior_key = _prior_month(today)
-    prior = defaultdict(lambda: Decimal("0"))
-    for record in emitted:
-        if record.timestamp.startswith(prior_key) and record.category:
-            prior[record.category] += record.amount
+    months = sorted(row.timestamp[:7] for row in rows if row.timestamp)
+    prior_key = _month_before(months[0]) if months else None
 
+    prior = defaultdict(lambda: Decimal("0"))
+    if prior_key:
+        for record in emitted:
+            if record.timestamp.startswith(prior_key) and record.category:
+                prior[record.category] += record.amount
+
+    factor = Decimal(str(DOUBLING_FACTOR))
     doubled = [
         category for category, total in by_category.items()
-        if prior.get(category) and total > prior[category] * Decimal(str(DOUBLING_FACTOR))
+        if prior.get(category) and abs(total) > abs(prior[category]) * factor
     ]
 
+    stamps = [row.timestamp for row in rows if row.timestamp]
     return {
         "by_account": dict(by_account),
+        "counts_by_account": dict(counts_by_account),
         "by_category": dict(by_category),
+        "prior_month": prior_key,
         "prior_by_category": dict(prior),
         "doubled": sorted(doubled),
         "missing_accounts": missing_accounts,
+        "date_range": [min(stamps), max(stamps)] if stamps else None,
         "total": sum((r.amount for r in rows), Decimal("0")),
     }
 
@@ -68,6 +92,24 @@ def summarize(rows, emitted, missing_accounts, today=None):
 def review(drop, state, work, since=None):
     """Phase one: parse, dedupe, categorize, write the work file."""
     state = pathlib.Path(state)
+    drop = pathlib.Path(drop)
+
+    if since is not None:
+        # --since is compared lexicographically against ISO timestamps, so
+        # an unpadded or misspelled date silently matches nothing and the
+        # run reports "0 new transactions" -- which reads as "nothing to do".
+        try:
+            date.fromisoformat(since)
+        except ValueError:
+            raise UsageError(
+                f"--since {since!r} is not a date; expected YYYY-MM-DD "
+                f"(zero-padded, e.g. 2026-08-01)") from None
+
+    if not drop.is_dir():
+        raise UsageError(
+            f"drop folder {drop} does not exist. Create it and put this "
+            f"month's exports in it, or pass --drop with the right path.")
+
     accounts = load_accounts(state / "accounts.toml")
     entries = load_map(state / "merchant-map.csv")
     emitted = load_emitted(state / "emitted.csv")
@@ -109,19 +151,28 @@ def review(drop, state, work, since=None):
         "missing_accounts": missing,
         "exact_duplicates": len(result.exact_duplicates),
         "date_range": [min(stamps), max(stamps)] if stamps else None,
+        "since": since,
     }
     work = pathlib.Path(work)
     work.parent.mkdir(parents=True, exist_ok=True)
     work.write_text(json.dumps(payload, indent=2))
 
-    _print_review(payload, emitted)
+    _print_review(payload)
     return 0
 
 
-def _print_review(payload, emitted):
+def _print_review(payload):
     rows = payload["rows"]
-    print(f"{len(rows)} new transactions "
-          f"({payload['exact_duplicates']} already exported)")
+    if payload.get("since"):
+        # Under --since the partition ran against an empty ledger, so the
+        # duplicate count is structurally zero. Printing it would read as
+        # "dedupe checked and found nothing", the opposite of the truth.
+        print(f"{len(rows)} transactions from {payload['since']} forward")
+        print(f"  --since bypassed emitted.csv entirely: no duplicate check "
+              f"ran, and rows exported by an earlier run CAN be re-emitted.")
+    else:
+        print(f"{len(rows)} new transactions "
+              f"({payload['exact_duplicates']} already exported)")
 
     # Printed every run so a drifted emitted.csv is visible rather than
     # silently swallowing a month.
@@ -147,10 +198,39 @@ def _print_review(payload, emitted):
               f"{row['transaction'][:40]:<40}  {proposal}{flag}")
 
 
-def commit(work, state, out, overrides):
+def _consumed_path(work):
+    """Where a work file is parked once its rows have been committed."""
+    return work.with_suffix(".committed.json")
+
+
+def commit(work, state, out, overrides, recommit=False):
     """Phase two: apply corrections, write output, then update state."""
     state = pathlib.Path(state)
-    payload = json.loads(pathlib.Path(work).read_text())
+    out = pathlib.Path(out)
+    work = pathlib.Path(work)
+
+    # Re-running commit on the same work file -- plausible when the user
+    # spots a wrong category and asks for another --set -- would append
+    # every row to emitted.csv a second time and re-fold every decision
+    # into the map. The work file is therefore consumed on success.
+    consumed = _consumed_path(work)
+    if not work.exists() and consumed.exists():
+        if not recommit:
+            raise UsageError(
+                f"{work} was already committed (moved to {consumed}). "
+                f"Re-run `review` for a fresh work file, or pass --recommit "
+                f"to write it again -- which will duplicate the rows it "
+                f"already exported.")
+        work = consumed
+
+    if not work.exists():
+        raise UsageError(f"no work file at {work}; run `review` first.")
+
+    if not out.parent.is_dir():
+        raise UsageError(
+            f"cannot write {out}: the directory {out.parent} does not exist.")
+
+    payload = json.loads(work.read_text())
 
     # A stale or mistyped --set row number must never be silently discarded
     # in favor of the proposed category: that is a deliberate correction
@@ -187,26 +267,49 @@ def commit(work, state, out, overrides):
 
     ledger_rows = [row for _, row in rows]
 
+    # Read before appending: the prior-month comparison must not see this
+    # batch, and append_emitted is about to put it there.
+    emitted_before = load_emitted(state / "emitted.csv")
+
     # Output first. State that under-claims produces a visible duplicate;
     # state that over-claims silently loses a transaction.
     write_ledger(out, ledger_rows)
 
     entries = load_map(state / "merchant-map.csv")
+    # The streak is "consecutive runs the user accepted this category", not
+    # consecutive transactions: five Costco trips in one month are one
+    # human confirmation, not five.
+    bumped = set()
     for record, row in rows:
-        record_decision(entries, record["merchant"], row.category)
+        merchant = record["merchant"]
+        record_decision(entries, merchant, row.category,
+                        count_streak=merchant not in bumped)
+        bumped.add(merchant)
+    clearable = sorted(m for m in bumped
+                       if m in entries and entries[m].clearable())
     save_map(state / "merchant-map.csv", entries)
 
     append_emitted(state / "emitted.csv", ledger_rows)
 
-    summary = summarize(ledger_rows, load_emitted(state / "emitted.csv"),
-                        payload["missing_accounts"])
+    # Only now is the work file spent. Doing this last keeps the refusal
+    # paths above re-runnable.
+    if work != consumed:
+        work.replace(consumed)
+
+    summary = summarize(ledger_rows, emitted_before, payload["missing_accounts"])
     print(f"\nWrote {len(ledger_rows)} rows to {out}")
+    if summary["date_range"]:
+        print(f"  covering {summary['date_range'][0]} to {summary['date_range'][1]}")
     if summary["missing_accounts"]:
         print(f"  WARNING no file matched: {', '.join(summary['missing_accounts'])}")
     for account, total in sorted(summary["by_account"].items()):
-        print(f"  {account}: {total:.2f}")
+        print(f"  {account}: {summary['counts_by_account'][account]} rows, {total:.2f}")
     for category in summary["doubled"]:
-        print(f"  WARNING {category} more than doubled vs last month")
+        print(f"  WARNING {category} more than doubled vs "
+              f"{summary['prior_month']}")
+    if clearable:
+        print(f"  confirmed {CLEAR_FLAG_STREAK} runs running, offer to clear "
+              f"the ambiguity flag: {', '.join(clearable)}")
     return 0
 
 
@@ -248,6 +351,9 @@ def main(argv=None):
     commit_cmd.add_argument("--out", type=pathlib.Path, required=True)
     commit_cmd.add_argument("--set", action="append", metavar="N=Category",
                             help="override row N's category; repeatable")
+    commit_cmd.add_argument("--recommit", action="store_true",
+                            help="commit a work file that was already "
+                                 "committed, duplicating its rows")
 
     args = parser.parse_args(argv)
 
@@ -255,8 +361,9 @@ def main(argv=None):
         if args.command == "review":
             return review(args.drop, args.state, args.work, args.since)
         overrides = _parse_overrides(args.set)
-        return commit(args.work, args.state, args.out, overrides)
-    except (ParseError, OverrideError) as exc:
+        return commit(args.work, args.state, args.out, overrides,
+                      recommit=args.recommit)
+    except (ParseError, UsageError) as exc:
         print(f"\nSTOPPED: {exc}", file=sys.stderr)
         return 1
 

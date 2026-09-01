@@ -6,7 +6,7 @@ from decimal import Decimal
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 
-from ledger import COLUMNS, Row, read_ledger, write_ledger
+from ledger import COLUMNS, LedgerError, Row, parse_money, read_ledger, write_ledger
 
 
 def make_row(timestamp="2026-08-04", transaction="SQ *BLUE BOTTLE 1123",
@@ -59,6 +59,55 @@ class TestLedgerRoundTrip(unittest.TestCase):
     def test_descriptor_with_comma_survives_round_trip(self):
         write_ledger(self.tmp, [make_row(transaction='ACME, INC. #42')])
         self.assertEqual(read_ledger(self.tmp)[0].transaction, 'ACME, INC. #42')
+
+
+class TestParseMoney(unittest.TestCase):
+    """The one money parser, shared by the sheet reader and the bank parser."""
+
+    def test_strips_dollar_sign(self):
+        self.assertEqual(parse_money("$14.25"), Decimal("14.25"))
+
+    def test_strips_thousands_comma(self):
+        self.assertEqual(parse_money("1,234.56"), Decimal("1234.56"))
+
+    def test_parses_parenthesized_negative(self):
+        self.assertEqual(parse_money("(6.50)"), Decimal("-6.50"))
+
+    def test_empty_string_raises(self):
+        with self.assertRaises(ValueError):
+            parse_money("")
+
+    def test_nonsense_raises_rather_than_leaking_invalid_operation(self):
+        with self.assertRaises(ValueError):
+            parse_money("twelve dollars")
+
+
+class TestReadLedgerValidation(unittest.TestCase):
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp()) / "history.csv"
+
+    def test_wrong_header_names_the_file_and_the_missing_columns(self):
+        self.tmp.write_text("Date,Description,Value\n2026-08-04,COFFEE,6.50\n")
+        with self.assertRaises(LedgerError) as ctx:
+            read_ledger(self.tmp)
+        message = str(ctx.exception)
+        self.assertIn(str(self.tmp), message)
+        self.assertIn("Timestamp", message)
+        self.assertIn("Amount", message)
+
+    def test_blank_amount_raises_with_the_line_number(self):
+        self.tmp.write_text(
+            "Timestamp,Transaction,Notes,Amount,Category,Account\n"
+            "2026-08-04,COFFEE,,,Dining,Visa\n")
+        with self.assertRaises(LedgerError) as ctx:
+            read_ledger(self.tmp)
+        self.assertIn(":2", str(ctx.exception))
+
+    def test_parenthesized_amount_matches_the_bank_parser(self):
+        self.tmp.write_text(
+            "Timestamp,Transaction,Notes,Amount,Category,Account\n"
+            "2026-08-04,COFFEE,,(42.10),Dining,Visa\n")
+        self.assertEqual(read_ledger(self.tmp)[0].amount, Decimal("-42.10"))
 
 
 if __name__ == "__main__":

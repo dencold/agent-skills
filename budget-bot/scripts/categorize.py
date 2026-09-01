@@ -61,7 +61,13 @@ def fuzzy_match(key, entries):
 
 
 def categorize(rows, entries):
-    """Assign a category to each row, marking what needs human review."""
+    """Assign a category to each row, marking what needs human review.
+
+    Contract run.py depends on: every Decision carries the same `Row`
+    object it was handed, never a copy. run.py matches dedupe's near-match
+    list against decisions by `id(decision.row)`, so a copy here would
+    silently stop possible duplicates from reaching the review table.
+    """
     decisions = []
 
     for row in rows:

@@ -54,6 +54,19 @@ before or what genuinely splits by category from trip to trip.
    before the tool is trusted with a real month — report the number
    honestly either way.
 
+   **If the number is short, fix `scripts/normalize.py` before building
+   the map, never after.** Normalization is the key for both
+   `merchant-map.csv` and the dedupe hashes in `emitted.csv`; changing it
+   later invalidates every entry in both, so the map stops matching and
+   dedupe stops recognizing rows that were already exported and pasted.
+   The first thing to try is stripping *interior* store numbers — today
+   only a trailing run of noise tokens is removed, so `COSTCO WHSE #0455
+   SEATTLE WA` keeps its store number and every location becomes its own
+   key. It is deliberately left untuned until it is measured against real
+   descriptors: collapsing two genuinely different merchants is a silent
+   miscategorization, while fragmenting one merchant only costs a review
+   row.
+
    Once the holdout number looks right, build the map for real:
 
    ```bash
@@ -83,6 +96,12 @@ merchant map and dedupe ledger update themselves as a side effect of
 `commit`. The output CSV is the deliverable — this skill deliberately
 stops there rather than writing to Google Sheets itself.
 
+`commit` consumes its work file — on success `work.json` becomes
+`work.committed.json` and a second `commit` on it is refused, so spotting
+a wrong category afterwards and re-running can't export the whole month
+twice. Re-run `review` for a fresh work file instead; the rows already
+exported are deduped away.
+
 ## Where state lives, and why
 
 Everything in `~/.claude/budget-bot/` — `accounts.toml`,
@@ -97,7 +116,7 @@ where that month's raw bank exports land before a run.
 ## Verify
 
 ```bash
-python3 -m unittest discover -s tests   # 101 tests
+python3 -m unittest discover -s tests   # 134 tests
 ```
 
 The suite covers parsing, normalization, dedupe, categorization, and the

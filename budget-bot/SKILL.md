@@ -46,6 +46,33 @@ Report the coverage figure plainly. Near 85% means the map works. Near
 60% means normalization is mis-collapsing merchants — show the misses and
 say so rather than proceeding as though the run succeeded.
 
+> **STOP HERE until the coverage number is judged acceptable.** This is a
+> gate, not a progress report. Do not run the real bootstrap on a number
+> the user has not looked at and accepted.
+>
+> **If coverage is short, `scripts/normalize.py` must be fixed BEFORE the
+> map is built — never after.** Changing normalization later invalidates
+> every key in `merchant-map.csv` *and* every hash in `emitted.csv`: the
+> map silently stops matching, and dedupe stops recognizing rows it has
+> already exported, so the next run re-emits a month the user already
+> pasted. Rebuilding after the fact means rebuilding both files from
+> scratch and reconciling the sheet by hand.
+>
+> The first thing to try is **interior store-number removal**. Today
+> `normalize_merchant` only strips a *trailing* run of noise tokens, so
+> `COSTCO WHSE #0455 SEATTLE WA` collapses to `COSTCO WHSE #0455 SEATTLE`
+> and `TARGET 00123 SEATTLE` is not collapsed at all. `MERCHANT #NNNN CITY
+> ST` is the dominant card-present descriptor shape, so every store
+> location becomes its own map key — tier-2 fuzzy matching rescues these,
+> but each one lands in the review table every single month. Dropping
+> interior digit-bearing tokens is the targeted fix. Re-run the holdout
+> after any change to normalization, and only then build the map.
+>
+> This was deliberately left untuned: with no real bank data on hand,
+> over-collapsing two distinct merchants (a miscategorization that lands
+> in the sheet silently) is worse than fragmenting one merchant (an extra
+> review row). The holdout is what settles it against real descriptors.
+
 Then build the map:
 
 ```bash
@@ -89,15 +116,21 @@ Reads `~/Documents/budget-bot/`. Pass `--drop <path>` for a different
 folder. `--since YYYY-MM-DD` ignores `emitted.csv` entirely and takes
 everything in the drop folder from that date forward — use it only when
 asked to, such as backfilling after fixing a config, since it bypasses the
-normal duplicate check. `--state` and `--work` override where state and
-the intermediate work file live; leave them at their defaults for a normal
-run.
+normal duplicate check and rows an earlier run already exported **can** be
+emitted again. The date must be zero-padded ISO (`2026-08-01`); anything
+else is refused rather than quietly matching nothing. `--state` and
+`--work` override where state and the intermediate work file live; leave
+them at their defaults for a normal run.
 
 If it stops with `STOPPED:`, do not work around it. An unrecognized header
 means a new account or a changed export format — walk through
 `references/adding-an-account.md`. An ambiguous match means two accounts
 share a format and need `filename_hint` values. A malformed row means the
-export is damaged.
+export is damaged. **Two files matching the same account** — usually
+`activity.csv` and `activity (1).csv` from a double download — also halts:
+every row in them would be counted twice and nothing downstream would
+catch it. Tell the user which files collided and have them delete the
+redundant one.
 
 **If it warns that no file matched an account, say so first and loudly.**
 A forgotten download is the most likely error in this whole process, and a
@@ -131,12 +164,27 @@ appear in the review table. That is deliberate: a mistyped row number
 fails loudly instead of silently falling back to the tool's own guess for
 that row.
 
+**Commit consumes the work file.** On success `work.json` is renamed to
+`work.committed.json`, and a second `commit` on it is refused. If the user
+spots a wrong category *after* committing, do not re-run commit with an
+extra `--set` — that would export every row a second time. Re-run
+`review`, which builds a fresh work file (the already-exported rows are
+now deduped away), or fix the single cell in the output CSV and the
+merchant's row in `merchant-map.csv` by hand. `--recommit` exists but
+duplicates every row in the file; only use it if the user explicitly wants
+that.
+
 ### 4. Report
 
-Give the user the output path, the row count, per-account totals, and any
-warning the script printed. If a category more than doubled against last
-month, name it — it is usually either a real anomaly worth knowing about
-or a miscategorization worth fixing before it enters the sheet.
+Give the user the output path, the date range covered, the row count and
+dollar total per account, and any warning the script printed. If a
+category more than doubled against the prior month, name it — it is
+usually either a real anomaly worth knowing about or a miscategorization
+worth fixing before it enters the sheet. The comparison is on magnitudes,
+so it works for income (which is negative) as well as spending.
+
+If commit lists merchants whose ambiguity flag can be cleared, offer that
+to the user — see below.
 
 Then tell them the file is ready to paste. Do not attempt to write to
 Google Sheets; this skill deliberately stops at the CSV.
@@ -146,11 +194,21 @@ Google Sheets; this skill deliberately stops at the CSV.
 A flag is normally set by the scripts — inferred at bootstrap, or learned
 the first time the user overrides a silent assignment. The user can also
 set one directly ("always ask me about Amazon"): find the merchant's row
-in `merchant-map.csv` and set its `ambiguous` column to `true`. If the
-merchant is not in the map yet, say so rather than inventing a row; it
-will be added the first time it appears.
+in `merchant-map.csv` and set its `ambiguous` column to `true`. The column
+accepts `true`/`yes`/`y`/`1` and `false`/`no`/`n`/`0`, in any casing;
+anything else makes `load_map` stop and name the merchant rather than
+reading as false. If the merchant is not in the map yet, say so rather
+than inventing a row; it will be added the first time it appears.
 
 When a flagged merchant has been confirmed the same way five runs in a
-row, `merchant-map.csv` marks it clearable. Offer to clear it. Never
+row, **`commit` prints it** on a line beginning `confirmed 5 runs
+running, offer to clear the ambiguity flag:`. There is no clearable column
+in the CSV — that line is the signal. When you see it, offer to clear the
+flag; if the user accepts, set that merchant's `ambiguous` column to
+`false` in `merchant-map.csv` and leave every other column alone. Never
 clear one without asking — a flag disappearing unprompted is exactly the
 change a user would not notice.
+
+The streak counts *runs*, not transactions: five Costco trips in one month
+advance it by one, because the safeguard is five separate human
+confirmations.

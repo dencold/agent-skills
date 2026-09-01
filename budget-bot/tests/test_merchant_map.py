@@ -65,13 +65,59 @@ class TestMapRoundTrip(unittest.TestCase):
         # Manually edit the file to introduce malformed data
         content = self.tmp.read_text()
         content = content.replace("STORE,Grocery,10,false,0,",
-                                  "STORE,Grocery,10,false,0,Household:many")
+                                  'STORE,Grocery,10,false,0,"Household,many"')
         self.tmp.write_text(content)
         # load_map should raise ValueError with merchant context
         with self.assertRaises(ValueError) as cm:
             load_map(self.tmp)
         self.assertIn("STORE", str(cm.exception))
         self.assertIn("Household", str(cm.exception))
+
+
+class TestAmbiguousColumn(unittest.TestCase):
+    """SKILL.md tells the user to hand-edit this cell, so it reads what they type."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp()) / "merchant-map.csv"
+
+    def _write(self, ambiguous="false", seen="10", streak="0"):
+        self.tmp.write_text(
+            "merchant,category,seen,ambiguous,streak,alternates\n"
+            f"COSTCO,Grocery,{seen},{ambiguous},{streak},\n")
+
+    def test_yes_reads_as_true(self):
+        for word in ("yes", "Yes", "Y", "1", "TRUE"):
+            with self.subTest(word=word):
+                self._write(ambiguous=word)
+                self.assertTrue(load_map(self.tmp)["COSTCO"].ambiguous)
+
+    def test_no_reads_as_false(self):
+        for word in ("no", "N", "0", "False", ""):
+            with self.subTest(word=word):
+                self._write(ambiguous=word)
+                self.assertFalse(load_map(self.tmp)["COSTCO"].ambiguous)
+
+    def test_anything_else_raises_naming_merchant_and_cell(self):
+        self._write(ambiguous="maybe")
+        with self.assertRaises(ValueError) as ctx:
+            load_map(self.tmp)
+        self.assertIn("COSTCO", str(ctx.exception))
+        self.assertIn("maybe", str(ctx.exception))
+        self.assertIn("ambiguous", str(ctx.exception))
+
+    def test_bad_seen_raises_with_merchant_context(self):
+        self._write(seen="lots")
+        with self.assertRaises(ValueError) as ctx:
+            load_map(self.tmp)
+        self.assertIn("COSTCO", str(ctx.exception))
+        self.assertIn("seen", str(ctx.exception))
+
+    def test_bad_streak_raises_with_merchant_context(self):
+        self._write(streak="three")
+        with self.assertRaises(ValueError) as ctx:
+            load_map(self.tmp)
+        self.assertIn("COSTCO", str(ctx.exception))
+        self.assertIn("streak", str(ctx.exception))
 
 
 class TestRecordDecision(unittest.TestCase):
@@ -103,6 +149,41 @@ class TestRecordDecision(unittest.TestCase):
         self.assertEqual(entry.streak, CLEAR_FLAG_STREAK)
         self.assertTrue(entry.ambiguous, "the flag is only cleared when the user says so")
         self.assertTrue(entry.clearable())
+
+    def test_streak_is_not_bumped_twice_within_one_run(self):
+        # The streak counts consecutive runs the user accepted a category.
+        # Five Costco trips in one month are one confirmation, not five.
+        entries = {"COSTCO": MapEntry("COSTCO", "Grocery", 30, True, 0, {"Household": 13})}
+        record_decision(entries, "COSTCO", "Grocery")
+        for _ in range(4):
+            record_decision(entries, "COSTCO", "Grocery", count_streak=False)
+        self.assertEqual(entries["COSTCO"].streak, 1)
+        self.assertEqual(entries["COSTCO"].seen, 35)
+
+    def test_disagreement_resets_the_streak_even_mid_run(self):
+        entries = {"COSTCO": MapEntry("COSTCO", "Grocery", 30, True, 3, {})}
+        record_decision(entries, "COSTCO", "Grocery")
+        record_decision(entries, "COSTCO", "Household", count_streak=False)
+        self.assertEqual(entries["COSTCO"].streak, 0)
+
+    def test_alternate_that_overtakes_the_stored_category_is_promoted(self):
+        # Six overrides of a five-row Grocery entry: "usually Grocery" is
+        # now false, and the review table would pre-fill the minority.
+        entries = {"COSTCO": MapEntry("COSTCO", "Grocery", 5, False, 0, {})}
+        for _ in range(6):
+            record_decision(entries, "COSTCO", "Household")
+        entry = entries["COSTCO"]
+        self.assertEqual(entry.category, "Household")
+        self.assertEqual(entry.alternates, {"Grocery": 5})
+        self.assertEqual(entry.seen, 11)
+        self.assertEqual(entry.describe(),
+                         "Household (usually; 5 of 11 were Grocery)")
+
+    def test_a_minority_alternate_does_not_take_over(self):
+        entries = {"TARGET": MapEntry("TARGET", "Household", 20, False, 0, {})}
+        for _ in range(3):
+            record_decision(entries, "TARGET", "Gifts")
+        self.assertEqual(entries["TARGET"].category, "Household")
 
 
 class TestDescribe(unittest.TestCase):
