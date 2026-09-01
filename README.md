@@ -91,3 +91,13 @@ hosted MCP servers added in the official Connectors section. With that limitatio
 removes the cross-channel comparison the skill exists to do.
 
 Install this skill in Claude Code for full functionality.
+
+### budget-bot
+
+Turns per-account CSV exports from banks and credit cards into one
+normalized, categorized ledger ready to paste into a budget spreadsheet.
+Bootstraps a merchant→category map from your existing sheet, so only new
+or genuinely ambiguous merchants need a decision.
+
+Needs Python 3.11+ and nothing else. Setup is in the
+[skill's README](budget-bot/README.md).
