@@ -11,7 +11,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
 
 import bootstrap
 from bootstrap import (
-    AMBIGUITY_MINORITY_COUNT, build_map,
+    AMBIGUITY_MINORITY_COUNT, build_map, read_categories,
 )
 from ledger import Row, write_ledger
 
@@ -184,6 +184,108 @@ class TestHoldout(unittest.TestCase):
         self.assertEqual(result["test_rows"], 1)
         self.assertEqual(result["auto_assigned"], 0)
         self.assertEqual(result["correct"], 0)
+
+
+class TestReadCategories(unittest.TestCase):
+    def _write(self, tmp_path, text):
+        path = tmp_path / "categories.md"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_plain_list_still_parses_as_before(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "categories.txt"
+            path.write_text("Grocery\n# a comment line\n\nDining\n", encoding="utf-8")
+            self.assertEqual(read_categories(path), {"Grocery", "Dining"})
+
+    def test_markdown_bullets_win_over_heading_comment_and_prose(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp_path=pathlib.Path(tmp), text=(
+                "# Categories\n"
+                "\n"
+                "The authoritative list. A category not here is not valid.\n"
+                "\n"
+                "- **Grocery** — food and household staples\n"
+                "- **Dining** — restaurants and takeout\n"
+                "\n"
+                "<!-- Added as they come up in review. -->\n"
+                "\n"
+                "## Boundary rules\n"
+                "\n"
+                "Prepared food from a grocery store counter is Grocery, not "
+                "Dining; Dining requires table service or a restaurant.\n"
+            ))
+            self.assertEqual(read_categories(path), {"Grocery", "Dining"})
+
+    def test_bullet_description_with_an_em_dash_does_not_confuse_the_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp_path=pathlib.Path(tmp), text=(
+                "- **Travel** — flights, lodging — including the deposit — "
+                "and rental cars\n"
+            ))
+            self.assertEqual(read_categories(path), {"Travel"})
+
+    def test_unfilled_skeleton_with_no_bullets_returns_empty_not_prose(self):
+        # references/categories.md before its first category: no bullet
+        # lines yet, but its HTML-comment instructions are still there.
+        # Falling back to the plain-list rule here would read the
+        # instructions themselves as phantom categories.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write(tmp_path=pathlib.Path(tmp), text=(
+                "# Categories\n"
+                "\n"
+                "The authoritative list. A category not here is not valid "
+                "output; if a transaction seems to need one, ask rather "
+                "than inventing it.\n"
+                "\n"
+                "<!-- Filled in at first bootstrap from the user's history. "
+                "One line each:\n"
+                "     `- **Name** — what belongs here.` -->\n"
+                "\n"
+                "## Boundary rules\n"
+                "\n"
+                "Recurring judgment calls, settled once so they are settled "
+                "the same way every month.\n"
+                "\n"
+                "<!-- Added as they come up in review. -->\n"
+            ))
+            self.assertEqual(read_categories(path), set())
+
+    def test_actual_categories_md_skeleton_is_empty(self):
+        # The real shipped file, not a reconstruction of it -- catches drift
+        # between this test and the file it's meant to protect.
+        path = (pathlib.Path(__file__).resolve().parents[1]
+                / "references" / "categories.md")
+        self.assertEqual(read_categories(path), set())
+
+
+class TestMainCategoriesFlagEmptySkeleton(unittest.TestCase):
+    def test_empty_known_categories_falls_back_to_no_validation(self):
+        # A --categories file that parses to an empty set (the unfilled
+        # skeleton) must not reject every row as unrecognized -- that would
+        # silently produce an empty merchant map instead of a useful one.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+
+            history_path = tmp_path / "history.csv"
+            write_ledger(history_path, rows_for("SAFEWAY", "Grocery", 3))
+
+            categories_path = tmp_path / "categories.md"
+            categories_path.write_text(
+                "# Categories\n\n<!-- nothing filled in yet -->\n", encoding="utf-8"
+            )
+
+            out_path = tmp_path / "merchant-map.csv"
+
+            with mock.patch("bootstrap.build_map", wraps=build_map) as spy:
+                _quiet(bootstrap.main, [
+                    str(history_path),
+                    "--out", str(out_path),
+                    "--categories", str(categories_path),
+                ])
+
+            _, kwargs = spy.call_args
+            self.assertIsNone(kwargs["known_categories"])
 
 
 if __name__ == "__main__":

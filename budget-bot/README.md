@@ -57,17 +57,20 @@ before or what genuinely splits by category from trip to trip.
    Once the holdout number looks right, build the map for real:
 
    ```bash
-   python3 scripts/bootstrap.py history.csv
+   python3 scripts/bootstrap.py history.csv --categories references/categories.md
    ```
 
-   Resolve any category values the report calls out as odd or
-   inconsistent, then write the confirmed category list into
-   [`references/categories.md`](references/categories.md) — it starts as
-   an empty skeleton; the canonical category list comes from your sheet,
-   not from invention. From then on, pass `--categories` (a plain-text
-   file, one category name per line) on any later re-bootstrap so a
-   typo'd or retired category in the history gets reported instead of
-   silently indexed as real.
+   `references/categories.md` is the single source of truth for category
+   names — bootstrap reads it directly, so there's no separate list to
+   keep in sync. It starts as an empty skeleton (the canonical category
+   list comes from your sheet, not from invention), so this first run has
+   nothing to validate against yet and indexes the history's category
+   values as-is. Resolve any values the report calls out as odd or
+   inconsistent, then write the confirmed list into
+   [`references/categories.md`](references/categories.md) as bullets, one
+   per category. From then on, the same `--categories` flag on any later
+   re-bootstrap validates for real: a typo'd or retired category in the
+   history gets reported instead of silently indexed as real.
 
 ## The monthly run
 

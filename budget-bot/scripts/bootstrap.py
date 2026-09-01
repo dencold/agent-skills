@@ -7,6 +7,7 @@ to be indexed. Everything here reads; the only write is merchant-map.csv.
 
 import argparse
 import pathlib
+import re
 import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -145,19 +146,57 @@ def holdout_coverage(rows, month):
     }
 
 
-def read_categories(path):
-    """Parse a plain-text known-categories file: one name per line.
+# references/categories.md's bullet form: `- **Name** — description`. The
+# name is whatever sits between the first '**' pair; everything after is
+# free-text description and is never parsed, so a description containing
+# its own dashes or punctuation can't be mistaken for structure.
+_CATEGORY_BULLET = re.compile(r"^\s*-\s*\*\*(.+?)\*\*")
 
-    Blank lines and lines starting with '#' are ignored, so the file the
-    user hands us can carry comments without becoming a phantom category.
+# categories.md wraps every instructional line in an HTML comment precisely
+# so it reads as inert markup rather than content. Its presence marks a file
+# as the categories.md template even before a single bullet has been added --
+# which matters because the still-empty skeleton has no bullets yet, and
+# without this check it would fall through to the plain-list rule below and
+# read its own instructions as phantom categories.
+_HTML_COMMENT = re.compile(r"<!--")
+
+
+def read_categories(path):
+    """Parse the known-categories list from categories.md or a plain list.
+
+    references/categories.md is markdown: bullet lines for each category,
+    plus headings, HTML comments, and a boundary-rules section written as
+    prose. Reading it as one name per line would import that prose as
+    phantom categories, so when the file contains any bullet lines, only
+    those lines count -- everything else (headings, comments, boundary-rule
+    paragraphs) is ignored.
+
+    A file with no bullets but an HTML comment is the categories.md skeleton
+    before its first entry: nothing has been filled in yet, so this returns
+    an empty set rather than reading the template's own instructions as
+    categories.
+
+    Anything else -- no bullets, no HTML comment -- falls back to the
+    original plain-list contract: one category name per line, blanks and
+    '#' comments ignored. This keeps a hand-written list working exactly as
+    before.
     """
+    lines = pathlib.Path(path).read_text(encoding="utf-8").splitlines()
+
+    bulleted = [m.group(1).strip() for line in lines
+                if (m := _CATEGORY_BULLET.match(line))]
+    if bulleted:
+        return set(bulleted)
+
+    if any(_HTML_COMMENT.search(line) for line in lines):
+        return set()
+
     categories = set()
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            categories.add(line)
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        categories.add(line)
     return categories
 
 
@@ -170,9 +209,10 @@ def main(argv=None):
     parser.add_argument("--force", action="store_true",
                         help="overwrite an existing map instead of writing alongside it")
     parser.add_argument("--categories", type=pathlib.Path,
-                        help="plain-text file of known categories, one per line, "
-                             "so rows with a typo'd or retired category are reported "
-                             "instead of silently indexed")
+                        help="known-categories file -- either references/categories.md "
+                             "(its bullet lines are read directly) or a plain-text list, "
+                             "one category per line -- so rows with a typo'd or retired "
+                             "category are reported instead of silently indexed")
     parser.add_argument("--holdout", metavar="YYYY-MM",
                         help="validate against this month instead of writing a map")
     args = parser.parse_args(argv)
@@ -195,6 +235,16 @@ def main(argv=None):
                 print(f"    {merchant}: flagged for review "
                       f"(would propose {got}, actual {expected})")
         return 0
+
+    if known_categories == set():
+        # An empty-but-not-None set would reject every row's category as
+        # unrecognized -- the categories.md skeleton before its first entry
+        # is the case this guards against. Falling back to no validation is
+        # the safe default; a category file that is empty on purpose is not
+        # a scenario this tool needs to support.
+        print(f"{args.categories}: no categories found yet -- "
+              f"proceeding without category validation")
+        known_categories = None
 
     entries, report = build_map(rows, known_categories=known_categories)
 

@@ -49,16 +49,20 @@ say so rather than proceeding as though the run succeeded.
 Then build the map:
 
 ```bash
-python3 <skill-dir>/scripts/bootstrap.py history.csv
+python3 <skill-dir>/scripts/bootstrap.py history.csv --categories <skill-dir>/references/categories.md
 ```
 
-`references/categories.md` is still the empty skeleton at this point, so
-this first build has nothing to validate category values against — it
-indexes whatever appears in the history, typos included. Report flagged,
-borderline, and recency-override merchants, and resolve any
-odd-looking category values with the user by eye. Write the confirmed
-category list into `references/categories.md`, one line per category as
-the skeleton's comment describes.
+`references/categories.md` is the single source of truth for category
+names, and bootstrap reads it directly — no separate list to maintain.
+Its bullet lines (`- **Name** — ...`) are what get parsed; headings, HTML
+comments, and the boundary-rules prose are ignored automatically. On this
+very first run the skeleton has no bullets yet, so there is nothing to
+validate against — bootstrap says so and indexes whatever category values
+appear in the history as-is. Report flagged, borderline, and
+recency-override merchants, and resolve any odd-looking category values
+with the user by eye. Write the confirmed category list into
+`references/categories.md` as bullets, one per category, following the
+skeleton's own comment.
 
 By default bootstrap never overwrites an existing map: if
 `~/.claude/budget-bot/merchant-map.csv` already exists, it writes
@@ -66,19 +70,12 @@ By default bootstrap never overwrites an existing map: if
 Only pass `--force` once you've confirmed the new build should replace the
 old one outright.
 
-From then on, `references/categories.md` is the source of truth, and any
-later re-bootstrap (a fresh year of history, a corrected export) should
-validate against it. Extract its category names into a plain-text file —
-one name per line, blank lines and `#` comments ignored — and pass it as
-`--categories`:
-
-```bash
-python3 <skill-dir>/scripts/bootstrap.py history.csv --categories categories.txt
-```
-
-This makes bootstrap report every category value in the history that
-doesn't match the list, which is what catches a typo or a retired
-category name before it gets silently indexed as if it were real.
+From then on, `references/categories.md` has real bullets, so the same
+`--categories` flag on any later re-bootstrap (a fresh year of history, a
+corrected export) validates for real: bootstrap reports every category
+value in the history that doesn't match a bullet in the file, which is
+what catches a typo or a retired category name before it gets silently
+indexed as if it were real.
 
 ## The monthly run
 
